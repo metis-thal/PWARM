@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Virtual env
+.venv/
+venv/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.benchmarks/
+
+# Codegraph index (local, regenerable)
+.codegraph/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Build artifacts
+*.egg-info/
+
+# Internal session data / 内部会话数据
+.omo/
+
+# Output / 输出
+out/
