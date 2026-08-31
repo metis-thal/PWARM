@@ -101,13 +101,19 @@ class World3D:
     # -- contact resolution ---------------------------------------------------
 
     def _solve_contacts(self, contacts: list[Contact3D]) -> None:
-        """Sequential impulse solver with positional correction (Baumgarte)."""
-        baumgarte = 0.05
+        """Sequential impulse solver with split positional correction.
+        
+        Uses split impulse: positional correction is applied only when bodies
+        are approaching (penetrating and closing), preventing energy injection
+        during separation phases.
+        """
+        baumgarte = 0.02
 
         for _ in range(self.solver_iterations):
             for c in contacts:
                 self._apply_impulse(c)
 
+        # Split impulse positional correction: only when approaching
         for c in contacts:
             self._positional_correction(c, baumgarte)
 
@@ -157,7 +163,8 @@ class World3D:
         # Friction (tangential)
         tangent = rv - vn * n
         tnorm = norm(tangent)
-        if tnorm > 1e-12:
+        rv_norm = norm(rv)
+        if tnorm > 1e-6 * max(rv_norm, 1.0):
             tangent = tangent / tnorm
             vt = float(np.dot(rv, tangent))
             # Effective mass for tangential
@@ -180,13 +187,29 @@ class World3D:
                 b.ang_vel += b.inv_inertia @ cross3(rb, friction_impulse)
 
     def _positional_correction(self, c: Contact3D, baumgarte: float) -> None:
-        """Push overlapping bodies apart along the contact normal."""
+        """Push overlapping bodies apart — only when approaching.
+        
+        Split impulse technique: positional correction is only applied when
+        bodies are still penetrating AND approaching (vn < 0). This prevents
+        energy injection that occurs when correction is applied during separation.
+        """
         a, b = c.a, c.b
         total_inv = a.inv_mass + b.inv_mass
         if total_inv < 1e-12 or c.penetration <= 0.0:
             return
+
+        # Only correct when approaching — skip when separating
+        ra = c.point - a.pos
+        rb = c.point - b.pos
+        va = a.vel + cross3(a.ang_vel, ra)
+        vb = b.vel + cross3(b.ang_vel, rb)
+        rv = vb - va
+        vn = float(np.dot(rv, c.normal))
+        if vn > 0.0:
+            return  # separating — let natural dynamics handle it
+
         slop = 0.005
-        correction = max(c.penetration - slop, 0.0) / total_inv * baumgarte
+        correction = max(c.penetration - slop, 0.0) * baumgarte / total_inv
         corr = correction * c.normal
         if not a.static:
             a.pos -= a.inv_mass * corr

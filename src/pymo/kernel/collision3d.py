@@ -497,24 +497,29 @@ def _sphere_box_penetration(body_a: Body, body_b: Body) -> Contact3D | None:
     if penetration <= 0:
         return None
     
-    # Normal in world space (from box to sphere)
+    # Geometric normal in world space (from box to sphere)
     normal_local = local_sphere - closest
     if norm(normal_local) > 1e-6:
-        normal = R_box @ (normal_local / (dist + 1e-12))
+        normal_geo = R_box @ (normal_local / (dist + 1e-12))
     else:
         # Sphere center inside box - use face normal
-        normal = np.array([0.0, 0.0, 1.0])  # fallback
+        normal_geo = np.array([0.0, 0.0, 1.0])  # fallback
+    
+    # Contact point: closest point on sphere surface toward box (using geometric normal)
+    contact_point = sphere.pos - normal_geo * sphere.shape.radius
     
     # Convention: normal must point from a to b
-    # If a=sphere (box is b), the computed normal points from box to sphere = b to a
-    # We need to flip it to point from a (sphere) to b (box)
-    # If a=box (sphere is b), the computed normal points from box to sphere = a to b, correct
+    # Geometric normal points from box to sphere.
+    # If a=sphere (box is b): flip to point from sphere to box (a to b)
+    # If a=box  (sphere is b): keep as-is (box to sphere = a to b)
     if body_a is sphere:
-        normal = -normal
+        normal = -normal_geo
+    else:
+        normal = normal_geo
     
     return Contact3D(
         a=body_a, b=body_b,
-        point=sphere.pos - normal * sphere.shape.radius,
+        point=contact_point,
         normal=normal,
         penetration=sphere.shape.radius - dist,
         restitution=max(body_a.material.restitution, body_b.material.restitution),
