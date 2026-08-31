@@ -300,23 +300,34 @@ class Body:
         self.recompute_mass_properties()
 
     def recompute_mass_properties(self) -> None:
-        """Set inverse mass / inertia from shape and material density."""
+        """Set inverse mass / inertia from shape and material density.
+        
+        If mass > 0 was explicitly set, use it and scale inertia accordingly.
+        Otherwise compute mass from shape volume * density.
+        """
         if self.static:
             self.inv_mass = 0.0
             self.inv_inertia = np.zeros((3, 3))
-            # Use a large but finite inertia for static bodies to avoid NaN
             self.inertia = np.eye(3) * 1e12
             return
         
-        self.inv_mass = 1.0 / self.mass if self.mass > 0 else 0.0
-        
         if hasattr(self.shape, 'compute_mass_properties'):
-            mass, inertia = self.shape.compute_mass_properties(self.material.density)
-            self.mass = mass
-            self.inertia = inertia
-            self.inv_inertia = inv(inertia)
+            density_mass, density_inertia = self.shape.compute_mass_properties(self.material.density)
+            if self.mass > 0:
+                # User specified mass — keep it, scale inertia to match
+                if density_mass > 0:
+                    scale = self.mass / density_mass
+                    self.inertia = density_inertia * scale
+                else:
+                    self.inertia = np.eye(3)
+            else:
+                # No mass specified — compute from density
+                self.mass = density_mass
+                self.inertia = density_inertia
+            self.inv_mass = 1.0 / self.mass if self.mass > 0 else 0.0
+            self.inv_inertia = inv(self.inertia)
         else:
-            # Fallback
+            self.inv_mass = 1.0 / self.mass if self.mass > 0 else 0.0
             self.inertia = np.eye(3)
             self.inv_inertia = np.eye(3)
 

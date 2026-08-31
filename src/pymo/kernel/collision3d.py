@@ -203,15 +203,17 @@ class EPAResult:
 
 
 def epa(body_a: Body, body_b: Body, simplex: np.ndarray, 
-        max_iterations: int = 32, tolerance: float = 1e-4) -> EPAResult | None:
+        max_iterations: int = 64, tolerance: float = 1e-6) -> EPAResult | None:
     """EPA (Expanding Polytope Algorithm) for penetration depth.
     
     Takes the final GJK simplex and expands it to find the contact normal and depth.
+    Improved version with robust face handling and degenerate case protection.
     """
     if len(simplex) < 4:
         return None
     
     # Build initial polytope from GJK simplex (tetrahedron)
+    # Faces are (i1, i2, i3) with CCW winding when viewed from outside
     faces = [
         (0, 1, 2),  # base
         (0, 1, 3),
@@ -221,26 +223,35 @@ def epa(body_a: Body, body_b: Body, simplex: np.ndarray,
     
     vertices = list(simplex)
     
-    for _ in range(max_iterations):
+    for iteration in range(max_iterations):
         # Find face closest to origin
         min_dist = float('inf')
-        closest_face = -1
+        closest_face_idx = -1
+        closest_normal = None
         
         for i, (i1, i2, i3) in enumerate(faces):
             v1, v2, v3 = vertices[i1], vertices[i2], vertices[i3]
-            normal = normalize(cross3(v2 - v1, v3 - v1))
+            edge1 = v2 - v1
+            edge2 = v3 - v1
+            normal = cross3(edge1, edge2)
+            n_len = norm(normal)
+            if n_len < 1e-12:
+                continue  # degenerate face
+            normal = normal / n_len
+            
+            # Distance from origin to face plane
             dist = np.dot(v1, normal)
             if dist < min_dist:
                 min_dist = dist
-                closest_face = i
+                closest_face_idx = i
+                closest_normal = normal
         
-        if closest_face == -1:
+        if closest_face_idx == -1 or closest_normal is None:
             return None
         
         # Get closest face
-        i1, i2, i3 = faces[closest_face]
-        v1, v2, v3 = vertices[i1], vertices[i2], vertices[i3]
-        normal = normalize(cross3(vertices[i2] - vertices[i1], vertices[i3] - vertices[i1]))
+        i1, i2, i3 = faces[closest_face_idx]
+        normal = closest_normal
         
         # Find support point in direction of normal
         support = _gjk_support(body_a, body_b, normal)
@@ -253,50 +264,107 @@ def epa(body_a: Body, body_b: Body, simplex: np.ndarray,
             contact_point = _support_point(body_a, normal) - normal * min_dist * 0.5
             return EPAResult(normal=normal, depth=min_dist, contact_point=contact_point)
         
-        # Add new vertex and update faces
+        # Add new vertex
         new_idx = len(vertices)
         vertices.append(support)
         
         # Find all faces visible from new vertex
-        new_faces = []
         visible = [False] * len(faces)
-        
         for i, (i1, i2, i3) in enumerate(faces):
-            v1, v2, v3 = vertices[i1], vertices[i2], vertices[i3]
-            normal = normalize(cross3(vertices[i2] - vertices[i1], vertices[i3] - vertices[i1]))
-            if np.dot(vertices[new_idx] - vertices[i1], normal) > 0:
+            v1 = vertices[i1]
+            edge1 = vertices[i2] - v1
+            edge2 = vertices[i3] - v1
+            face_normal = cross3(edge1, edge2)
+            n_len = norm(face_normal)
+            if n_len < 1e-12:
+                visible[i] = False
+                continue
+            face_normal = face_normal / n_len
+            
+            # Face is visible if new vertex is in front of it
+            if np.dot(support - v1, face_normal) > 1e-12:
                 visible[i] = True
         
-# Build horizon edges and create new faces
+        # Build horizon edges (edges between visible and non-visible faces)
+        horizon_edges = []
         for i, (i1, i2, i3) in enumerate(faces):
-            if visible[i]:
-                # Edge is on horizon if adjacent face is not visible
-                edges = [(i1, i2), (i2, i3), (i3, i1)]
-                for e1, e2 in edges:
-                    # Check if edge is on horizon
-                    is_horizon = True
-                    for j, (j1, j2, j3) in enumerate(faces):
-                        if i != j and not visible[j] and e1 in (j1, j2, j3) and e2 in (j1, j2, j3):
-                            is_horizon = False
-                            break
-                    
-                    if is_horizon:
-                        # Create new face with new vertex
-                        # Ensure correct winding
-                        if dot3(cross3(vertices[e2] - vertices[e1], vertices[new_idx] - vertices[e1]), 
-                                vertices[0] - vertices[e1]) > 0:
-                            new_faces.append((e1, e2, new_idx))
-                        else:
-                            new_faces.append((e2, e1, new_idx))
+            if not visible[i]:
+                continue
+            
+            # Check each edge of this visible face
+            edges = [(i1, i2), (i2, i3), (i3, i1)]
+            for e1, e2 in edges:
+                # Edge is on horizon if no other visible face shares it
+                is_horizon = True
+                for j, (j1, j2, j3) in enumerate(faces):
+                    if i == j or not visible[j]:
+                        continue
+                    # Check if face j shares this edge
+                    face_edges = [(j1, j2), (j2, j3), (j3, j1)]
+                    if (e1, e2) in face_edges or (e2, e1) in face_edges:
+                        is_horizon = False
+                        break
+                
+                if is_horizon:
+                    horizon_edges.append((e1, e2))
+        
+        # Create new faces from horizon edges
+        new_faces = []
+        for e1, e2 in horizon_edges:
+            # Determine correct winding: new face should have normal pointing outward
+            # The edge goes from e1 to e2, new vertex is new_idx
+            # Face should be (e1, e2, new_idx) or (e2, e1, new_idx)
+            # such that normal points away from the polytope interior
+            
+            # Use the midpoint of the edge and a reference point to determine winding
+            edge_mid = (vertices[e1] + vertices[e2]) * 0.5
+            # Vector from edge midpoint to new vertex
+            to_new = vertices[new_idx] - edge_mid
+            # Vector from edge midpoint to some interior point (use vertices[0] as reference)
+            to_interior = vertices[0] - edge_mid
+            
+            # The face normal should point away from interior
+            # cross(e2-e1, new_idx-e1) direction
+            edge_dir = vertices[e2] - vertices[e1]
+            new_dir = vertices[new_idx] - vertices[e1]
+            face_normal = cross3(edge_dir, new_dir)
+            
+            # Check if this normal points toward or away from interior
+            if np.dot(face_normal, to_interior) > 0:
+                # Normal points toward interior, flip winding
+                new_faces.append((e2, e1, new_idx))
+            else:
+                new_faces.append((e1, e2, new_idx))
         
         # Remove visible faces and add new ones
         faces = [f for i, f in enumerate(faces) if not visible[i]]
         faces.extend(new_faces)
         
-        if not faces:
+        if not faces or len(faces) < 4:
             break
     
-    # Fallback
+    # Fallback: return best estimate from last iteration
+    # Find closest face to origin
+    min_dist = float('inf')
+    best_normal = None
+    for i, (i1, i2, i3) in enumerate(faces):
+        v1, v2, v3 = vertices[i1], vertices[i2], vertices[i3]
+        edge1 = v2 - v1
+        edge2 = v3 - v1
+        normal = cross3(edge1, edge2)
+        n_len = norm(normal)
+        if n_len < 1e-12:
+            continue
+        normal = normal / n_len
+        dist = np.dot(v1, normal)
+        if dist < min_dist:
+            min_dist = dist
+            best_normal = normal
+    
+    if best_normal is not None:
+        contact_point = _support_point(body_a, best_normal) - best_normal * min_dist * 0.5
+        return EPAResult(normal=best_normal, depth=min_dist, contact_point=contact_point)
+    
     return None
 
 
@@ -436,6 +504,13 @@ def _sphere_box_penetration(body_a: Body, body_b: Body) -> Contact3D | None:
     else:
         # Sphere center inside box - use face normal
         normal = np.array([0.0, 0.0, 1.0])  # fallback
+    
+    # Convention: normal must point from a to b
+    # If a=sphere (box is b), the computed normal points from box to sphere = b to a
+    # We need to flip it to point from a (sphere) to b (box)
+    # If a=box (sphere is b), the computed normal points from box to sphere = a to b, correct
+    if body_a is sphere:
+        normal = -normal
     
     return Contact3D(
         a=body_a, b=body_b,

@@ -8,8 +8,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+from numpy.linalg import norm
 
-from pymo.kernel.math3d import integrate_angular_velocity, quat_normalize
+from pymo.kernel.collision3d import Contact3D, detect_collision, detect_all_collisions
+from pymo.kernel.math3d import cross3, integrate_angular_velocity, quat_normalize
 
 
 @dataclass
@@ -36,7 +38,7 @@ class World3D:
         self.step_count = 0
 
     def _integrate(self, h: float) -> None:
-        # 1. Apply gravity + accumulated forces to get new velocities (half-step for angular)
+        # 1. Apply gravity + accumulated forces to get new velocities
         for b in self.bodies:
             if b.static:
                 continue
@@ -50,12 +52,8 @@ class World3D:
             b.pos += b.vel * h
             b.orn = quat_normalize(integrate_angular_velocity(b.orn, b.ang_vel, h))
 
-        # 3. Collision detection
-        contacts = []
-        for i in range(len(self.bodies)):
-            for j in range(i + 1, len(self.bodies)):
-                # For now, use simplified AABB broad phase
-                contacts.extend(self._narrow_phase(self.bodies[i], self.bodies[j]))
+        # 3. Collision detection: AABB broad phase + GJK/EPA narrow phase
+        contacts = self._detect_collisions()
 
         # 4. Resolve contacts (impulse-based)
         if contacts:
@@ -65,20 +63,15 @@ class World3D:
         for b in self.bodies:
             b.clear_forces()
 
-    def _narrow_phase(self, a, b):
-        """Simple SAT-based collision for now; will be replaced with GJK/EPA."""
-        # Quick AABB check first
-        aabb_a = self._compute_aabb(a)
-        aabb_b = self._compute_aabb(b)
-        if not self._aabb_overlap(aabb_a, aabb_b):
-            return []
-        
-        # For now, use simplified collision
-        # TODO: Replace with GJK/EPA
-        return []
+    # -- broad phase ----------------------------------------------------------
 
     def _compute_aabb(self, body):
-        """Compute axis-aligned bounding box."""
+        """Compute axis-aligned bounding box (inflated for spheres)."""
+        # For spheres, use center ± radius to get proper AABB
+        if body.is_sphere():
+            r = body.shape.radius
+            center = body.pos
+            return np.stack([center - r, center + r])
         verts = body.get_world_vertices()
         if len(verts) == 0:
             return np.zeros((2, 3))
@@ -89,11 +82,116 @@ class World3D:
     def _aabb_overlap(self, a, b):
         return np.all(a[0] <= b[1]) and np.all(b[0] <= a[1])
 
-    def _solve_contacts(self, contacts):
-        """Simple impulse-based contact resolution."""
+    def _detect_collisions(self) -> list[Contact3D]:
+        """AABB broad phase + GJK/EPA narrow phase."""
+        # Broad phase
+        aabbs = [(self._compute_aabb(b), i) for i, b in enumerate(self.bodies)]
+        candidate_pairs = []
+        for i in range(len(aabbs)):
+            for j in range(i + 1, len(aabbs)):
+                if self._aabb_overlap(aabbs[i][0], aabbs[j][0]):
+                    candidate_pairs.append((aabbs[i][1], aabbs[j][1]))
+
+        # Narrow phase: GJK/EPA for each candidate pair
+        contacts = []
+        for i, j in candidate_pairs:
+            contacts.extend(detect_collision(self.bodies[i], self.bodies[j]))
+        return contacts
+
+    # -- contact resolution ---------------------------------------------------
+
+    def _solve_contacts(self, contacts: list[Contact3D]) -> None:
+        """Sequential impulse solver with positional correction (Baumgarte)."""
+        baumgarte = 0.05
+
+        for _ in range(self.solver_iterations):
+            for c in contacts:
+                self._apply_impulse(c)
+
         for c in contacts:
-            # Placeholder - will implement proper impulse resolution
-            pass
+            self._positional_correction(c, baumgarte)
+
+    def _apply_impulse(self, c: Contact3D) -> None:
+        a, b = c.a, c.b
+        n = c.normal
+        if a.inv_mass == 0 and b.inv_mass == 0:
+            return
+
+        ra = c.point - a.pos
+        rb = c.point - b.pos
+
+        # Relative velocity at contact point (3D)
+        va = a.vel + cross3(a.ang_vel, ra)
+        vb = b.vel + cross3(b.ang_vel, rb)
+        rv = vb - va
+
+        # Normal component
+        vn = float(np.dot(rv, n))
+        if vn > 0.0:
+            return  # separating
+
+        # Effective mass: 1/m_eff = 1/m_a + 1/m_b + (r_a×n)·(I_a⁻¹·(r_a×n)) + (r_b×n)·(I_b⁻¹·(r_b×n))
+        raxn = cross3(ra, n)
+        rbxn = cross3(rb, n)
+        inv_mass_eff = a.inv_mass + b.inv_mass
+        if not a.static:
+            inv_mass_eff += float(raxn @ a.inv_inertia @ raxn)
+        if not b.static:
+            inv_mass_eff += float(rbxn @ b.inv_inertia @ rbxn)
+
+        if inv_mass_eff < 1e-12:
+            return
+
+        e = c.restitution
+        j = -(1.0 + e) * vn / inv_mass_eff
+        impulse = j * n
+
+        # Apply equal-and-opposite impulses (conserves momentum)
+        if not a.static:
+            a.vel -= a.inv_mass * impulse
+            a.ang_vel -= a.inv_inertia @ cross3(ra, impulse)
+        if not b.static:
+            b.vel += b.inv_mass * impulse
+            b.ang_vel += b.inv_inertia @ cross3(rb, impulse)
+
+        # Friction (tangential)
+        tangent = rv - vn * n
+        tnorm = norm(tangent)
+        if tnorm > 1e-12:
+            tangent = tangent / tnorm
+            vt = float(np.dot(rv, tangent))
+            # Effective mass for tangential
+            raxt = cross3(ra, tangent)
+            rbxt = cross3(rb, tangent)
+            inv_mass_tan = a.inv_mass + b.inv_mass
+            if not a.static:
+                inv_mass_tan += float(raxt @ a.inv_inertia @ raxt)
+            if not b.static:
+                inv_mass_tan += float(rbxt @ b.inv_inertia @ rbxt)
+            jt = -vt / inv_mass_tan
+            max_friction = c.friction * abs(j)
+            jt = np.clip(jt, -max_friction, max_friction)
+            friction_impulse = jt * tangent
+            if not a.static:
+                a.vel -= a.inv_mass * friction_impulse
+                a.ang_vel -= a.inv_inertia @ cross3(ra, friction_impulse)
+            if not b.static:
+                b.vel += b.inv_mass * friction_impulse
+                b.ang_vel += b.inv_inertia @ cross3(rb, friction_impulse)
+
+    def _positional_correction(self, c: Contact3D, baumgarte: float) -> None:
+        """Push overlapping bodies apart along the contact normal."""
+        a, b = c.a, c.b
+        total_inv = a.inv_mass + b.inv_mass
+        if total_inv < 1e-12 or c.penetration <= 0.0:
+            return
+        slop = 0.005
+        correction = max(c.penetration - slop, 0.0) / total_inv * baumgarte
+        corr = correction * c.normal
+        if not a.static:
+            a.pos -= a.inv_mass * corr
+        if not b.static:
+            b.pos += b.inv_mass * corr
 
     def step(self, n: int = 1) -> None:
         """Advance the world by `n` fixed timesteps."""

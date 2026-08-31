@@ -134,31 +134,34 @@ class PhysicsViewer3D:
             )
         return "\n".join(lines)
 
-    def render_frame(self) -> np.ndarray:
+    def render_frame(self) -> np.ndarray | None:
         """Synchronize actors, update the data panel, render one frame.
 
-        Returns the rendered image (H, W, 3) uint8 for headless use.
+        Returns the rendered image (H, W, 3) uint8 in headless mode, else None.
         """
         self._sync_actors()
         self._text_panel.SetInput(self._panel_text())
         self.plotter.render()
-        return self.plotter.screenshot(return_img=True)
+        if self.off_screen:
+            return self.plotter.screenshot(return_img=True)
+        return None
 
     # -- interactive loop ---------------------------------------------------
 
     def _on_timer(self) -> None:
         if not self.paused:
-            # Step the world by speed * base_dt
             steps = max(1, round(self.speed))
             self.world.step(steps)
-        self.render_frame()
+        self._sync_actors()
+        self._text_panel.SetInput(self._panel_text())
+        self.plotter.render()
 
     def add_controls(self) -> None:
         """Register keyboard callbacks."""
-        self.plotter.add_key_callback(self._toggle_pause, key="space")
-        self.plotter.add_key_callback(self._speed_up, key="plus")
-        self.plotter.add_key_callback(self._speed_down, key="minus")
-        self.plotter.add_key_callback(self._reset, key="r")
+        self.plotter.add_key_event("space", lambda: self._toggle_pause())
+        self.plotter.add_key_event("plus", lambda: self._speed_up())
+        self.plotter.add_key_event("minus", lambda: self._speed_down())
+        self.plotter.add_key_event("r", lambda: self._reset())
 
     def _toggle_pause(self) -> None:
         self.paused = not self.paused
@@ -178,7 +181,7 @@ class PhysicsViewer3D:
     def run(self) -> None:
         """Start the interactive visualization loop."""
         self.add_controls()
-        self.plotter.add_timer_callback(self._on_timer, self.config.dt_render)
+        self.plotter.add_timer_event(max_steps=0, duration=self.config.dt_render, callback=self._on_timer)
         self.render_frame()
         self.plotter.show(auto_close=False)
         self.plotter.close()
@@ -211,20 +214,20 @@ def demo_3d() -> PhysicsViewer3D:
 
     w = World3D(gravity=np.array([0.0, 0.0, -9.81]), dt=1/120.0, solver_iterations=10)
     # Ground
-    w.add(box_body([0.0, 0.0, -0.5], [12.0, 12.0, 0.5], static=True))
+    w.add(box_body([0.0, 0.0, -0.5], np.array([12.0, 12.0, 0.5]), static=True))
     # A few static platforms
     for x in (-6.0, -1.0, 4.0):
-        w.add(box_body([x, 0.5], 2.0, 0.25, static=True))
+        w.add(box_body([x, 0.5, 0.0], np.array([2.0, 2.0, 0.25]), static=True))
     # Falling balls with varied materials
     bouncy = Material(restitution=0.9, friction=0.1)
     heavy = Material(restitution=0.2, friction=0.5)
     for i, (x, mat) in enumerate(
         [(-5.5, bouncy), (-2.5, bouncy), (0.5, heavy), (3.5, bouncy), (6.5, heavy)]
     ):
-        w.add(sphere_body([x, 6.0 + i * 0.5], 0.4, mass=1.0 + 0.5 * i, material=mat))
+        w.add(sphere_body([x, 0.0, 6.0 + i * 0.5], 0.4, mass=1.0 + 0.5 * i, material=mat))
     # A stack of boxes on the ground
     for j in range(3):
-        w.add(box_body([-4.0, 1.0 + j * 1.0], 0.5, 0.5, mass=1.0))
+        w.add(box_body([-4.0, 0.0, 1.0 + j * 1.0], np.array([0.5, 0.5, 0.5]), mass=1.0))
     return PhysicsViewer3D(w)
 
 

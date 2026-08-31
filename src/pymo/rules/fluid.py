@@ -5,7 +5,9 @@ Implements a 2D SPH solver with:
 - Spiky gradient kernel for pressure forces
 - Viscosity kernel for viscous forces
 - Tait equation of state for pressure: p = k * (rho - rho0)^gamma
-- Explicit symplectic Euler integration
+- XSPH velocity smoothing for stability
+- Artificial viscosity (Monaghan) for shock capturing
+- Predictor-corrector (Leapfrog) integration for better energy conservation
 
 All equations are standard SPH formulations; no hardcoded phenomena.
 """
@@ -21,12 +23,18 @@ import numpy as np
 class SPHParams:
     """SPH simulation parameters."""
 
-    h: float = 0.1            # smoothing length (kernel radius)
-    rest_density: float = 1000.0   # kg/m^3
-    stiffness: float = 5000.0  # Tait EOS stiffness k (Pa)
-    viscosity: float = 1.0     # dynamic viscosity (Pa*s)
+    h: float = 0.1                # smoothing length (kernel radius)
+    rest_density: float = 1000.0  # kg/m^3
+    stiffness: float = 5000.0     # Tait EOS stiffness k (Pa)
+    viscosity: float = 1.0        # dynamic viscosity (Pa*s)
     particle_mass: float = 8.66   # kg per particle (for spacing ~0.1, rest_density 1000)
-    gamma: float = 7.0         # Tait EOS exponent
+    gamma: float = 1.0            # Tait EOS exponent (1 = linear, 7 = standard for water)
+
+    # Stability parameters
+    xsph_eps: float = 0.5         # XSPH velocity smoothing factor [0, 1]
+    artificial_viscosity_alpha: float = 1.0  # Monaghan alpha
+    artificial_viscosity_beta: float = 2.0   # Monaghan beta
+    c_sound: float | None = None  # artificial sound speed (auto if None)
 
 
 def poly6_kernel(r2: float, h: float) -> float:
@@ -76,6 +84,9 @@ class SPHParticle:
     force: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=float))
     # Neighbor list indices (filled each step)
     neighbors: list[int] = field(default_factory=list)
+    # For predictor-corrector
+    vel_half: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=float))
+    pos_predicted: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=float))
 
 
 class SPHSystem:
@@ -84,6 +95,11 @@ class SPHSystem:
     def __init__(self, params: SPHParams | None = None):
         self.params = params or SPHParams()
         self.particles: list[SPHParticle] = []
+
+        # Auto-compute sound speed if not provided
+        if self.params.c_sound is None:
+            # c_sound = 10 * max expected velocity ~ 10 * sqrt(2*g*h) for water column
+            self.params.c_sound = 50.0  # m/s, typical for weakly compressible SPH
 
     def add_particle(self, pos: np.ndarray, vel: np.ndarray | None = None) -> int:
         """Add a particle, return its index."""
@@ -122,27 +138,37 @@ class SPHSystem:
     # -- density & pressure ---------------------------------------------------
 
     def compute_density_and_pressure(self) -> None:
+        params = self.params
         for p in self.particles:
             rho = 0.0
             for j in p.neighbors:
                 q = self.particles[j]
                 r2 = float(np.dot(q.pos - p.pos, q.pos - p.pos))
-                rho += q.mass * poly6_kernel(r2, self.params.h)
+                rho += q.mass * poly6_kernel(r2, params.h)
             # Clamp density to prevent negative pressure from under-density
-            p.density = max(rho, self.params.rest_density * 0.5)
-            # Tait EOS: p = k * (rho/rho0 - 1)
-            p.pressure = self.params.stiffness * (p.density / self.params.rest_density - 1.0)
+            # Match test expectation: clamp at 0.5 * rest_density
+            p.density = max(rho, params.rest_density * 0.5)
+            # Tait EOS: p = k * ((rho/rho0)^gamma - 1)
+            # Use linear form (gamma=1) for compatibility; gamma>1 makes it much stiffer
+            if params.gamma == 1.0:
+                p.pressure = params.stiffness * (p.density / params.rest_density - 1.0)
+            else:
+                p.pressure = params.stiffness * ((p.density / params.rest_density)**params.gamma - 1.0)
 
     # -- forces ---------------------------------------------------------------
 
     def compute_forces(self) -> None:
-        """Compute pressure + viscosity + gravity forces."""
+        """Compute pressure + viscosity + gravity + artificial viscosity forces."""
         params = self.params
         gravity = np.array([0.0, -9.81])
+        c_sound = params.c_sound
+        alpha = params.artificial_viscosity_alpha
+        beta = params.artificial_viscosity_beta
 
         for i, pi in enumerate(self.particles):
             f_pressure = np.zeros(2)
             f_viscosity = np.zeros(2)
+            f_artificial = np.zeros(2)
 
             for j in pi.neighbors:
                 pj = self.particles[j]
@@ -166,23 +192,90 @@ class SPHSystem:
                     lapW = viscosity_kernel_laplacian(r, params.h)
                     f_viscosity += pj.mass * params.viscosity * v_rel / pj.density * lapW
 
+                # Monaghan artificial viscosity for shock capturing
+                # Only applies when particles are approaching (v_rel · r_vec < 0)
+                v_rel = pj.vel - pi.vel
+                v_dot_r = float(np.dot(v_rel, r_vec))
+                if v_dot_r < 0:
+                    rho_avg = 0.5 * (pi.density + pj.density)
+                    c_avg = c_sound
+                    mu = r * v_dot_r / (r2 + 0.01 * params.h**2)
+                    pi_visc = (-alpha * c_avg * mu + beta * mu**2) / rho_avg
+                    f_artificial += pj.mass * pi_visc * spiky_gradient_kernel(r_vec, r, params.h)
+
             # Gravity
             f_gravity = pi.mass * gravity
 
-            pi.force = f_pressure + f_viscosity + f_gravity
+            pi.force = f_pressure + f_viscosity + f_artificial + f_gravity
+
+    # -- XSPH velocity smoothing ----------------------------------------------
+
+    def apply_xsph_smoothing(self) -> None:
+        """XSPH velocity smoothing: v_i = v_i + eps * sum_j (v_j - v_i) * W_ij / rho_j
+
+        This improves particle ordering and reduces tensile instability.
+        """
+        params = self.params
+        eps = params.xsph_eps
+        if eps <= 0:
+            return
+
+        for i, pi in enumerate(self.particles):
+            dv = np.zeros(2)
+            for j in pi.neighbors:
+                pj = self.particles[j]
+                if pj.density <= 0:
+                    continue
+                r2 = float(np.dot(pj.pos - pi.pos, pj.pos - pi.pos))
+                w = poly6_kernel(r2, params.h)
+                dv += (pj.vel - pi.vel) * w * pj.mass / pj.density
+            pi.vel += eps * dv
 
     # -- integration ----------------------------------------------------------
 
     def step(self, dt: float) -> None:
-        """Explicit symplectic Euler: update velocity then position."""
+        """Leapfrog integration with predictor-corrector for better energy conservation.
+
+        Predictor: v_{n+1/2} = v_n + a_n * dt/2
+                   x_{n+1} = x_n + v_{n+1/2} * dt
+
+        Corrector: recompute a_{n+1}, then v_{n+1} = v_{n+1/2} + a_{n+1} * dt/2
+        """
+        params = self.params
+
+        # --- Predictor ---
         self._build_neighbors()
         self.compute_density_and_pressure()
         self.clear_forces()
         self.compute_forces()
 
         for p in self.particles:
-            p.vel += p.force / p.mass * dt
-            p.pos += p.vel * dt
+            # Half-step velocity
+            p.vel_half = p.vel + p.force / p.mass * (dt * 0.5)
+            # Predict position
+            p.pos_predicted = p.pos + p.vel_half * dt
+
+        # --- Corrector ---
+        # Use predicted positions for neighbor search
+        old_positions = [p.pos.copy() for p in self.particles]
+        for p in self.particles:
+            p.pos = p.pos_predicted
+
+        self._build_neighbors()
+        self.compute_density_and_pressure()
+        self.clear_forces()
+        self.compute_forces()
+
+        for p in self.particles:
+            # Complete velocity step
+            p.vel = p.vel_half + p.force / p.mass * (dt * 0.5)
+            # Position already at p.pos_predicted (which we set above)
+
+        # --- XSPH smoothing on final velocity ---
+        self.apply_xsph_smoothing()
+
+        # Restore true positions (pos_predicted IS the new position)
+        # No need to copy back - we already moved pos to pos_predicted
 
     # -- utilities ------------------------------------------------------------
 
@@ -211,3 +304,20 @@ def create_water_column(
         for j in range(height):
             system.add_particle([x + i * spacing, y + j * spacing])
     return system
+
+
+if __name__ == "__main__":
+    # Quick self-test
+    params = SPHParams(h=0.1, rest_density=1000.0, stiffness=5000.0, particle_mass=8.66)
+    system = create_water_column(0, 0, 5, 10, 0.1, params)
+
+    print(f"Particles: {len(system.particles)}")
+    print(f"Initial density ratio: {system.min_density_ratio():.3f} - {system.max_density_ratio():.3f}")
+
+    for step in range(200):
+        system.step(dt=0.001)
+        if step % 50 == 0:
+            print(f"Step {step}: density ratio {system.min_density_ratio():.3f} - {system.max_density_ratio():.3f}")
+
+    print(f"Final density ratio: {system.min_density_ratio():.3f} - {system.max_density_ratio():.3f}")
+    print(f"Total energy: {system.total_energy():.3f}")
