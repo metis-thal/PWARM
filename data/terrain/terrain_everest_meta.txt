@@ -1,0 +1,9 @@
+location: Mt. Everest region
+lat: 27.988
+lon: 86.925
+zoom: 10
+tiles: 2x2
+pixels: 512x512
+elevation_min: -584.0
+elevation_max: 1800.0
+source: AWS Open Data / Mapzen Terrarium (SRTM)

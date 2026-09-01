@@ -1,0 +1,6 @@
+name: mt_fuji
+zoom: 12
+pixels: 512x512
+elevation_min: 377.0
+elevation_max: 1137.0
+source: AWS Open Data / Mapzen Terrarium (SRTM)
