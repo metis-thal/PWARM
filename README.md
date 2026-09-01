@@ -4,18 +4,20 @@ A self-evolving virtual physics world. All phenomena (rigid body, fluid, thermal
 
 一个自演化的虚拟物理世界。所有现象（刚体、流体、热力学、碰撞、形变、反应）都从底层微分方程中涌现——没有硬编码的动画，没有预设事件。AI层观察模拟世界，发现物理定律，并持续优化其世界模型。
 
-## Architecture (Four Immutable Layers) / 四层不可变架构
+## Architecture (Five Immutable Layers) / 五层不可变架构
 
 ```
 src/pymo/
 ├── kernel/   # Math/physics core: ODE/PDE solvers, Verlet integration, conservation (GROUND TRUTH)
 │             # 数学/物理核心：ODE/PDE求解器、Verlet积分、守恒定律（真值层）
+├── geology/  # Geology system: stratigraphy, thermal conduction, erosion, tectonics
+│             # 地质系统：地层学、热传导、侵蚀、构造运动
 ├── rules/    # Multi-discipline: mechanics, thermodynamics, fluids, materials, chemistry
 │             # 多学科规则：力学、热力学、流体、材料、化学
 ├── ai/       # AI reasoning/evolution: observer, hypothesis, verification, experimentation
 │             # AI推理/演化：观察器、假设、验证、实验
-└── viz/      # Visualization/observation: 3D render, data panels, state recording, replay
-              # 可视化/观察：3D渲染、数据面板、状态录制、回放
+└── viz/      # Visualization/observation: OpenGL GPU instancing, PBR shaders, frustum culling
+              # 可视化/观察：OpenGL GPU实例化、PBR着色器、视锥体剔除
 ```
 
 ## Core Rules / 核心规则
@@ -113,6 +115,64 @@ system.step(dt=0.01)  # one SPH step / 一个SPH步长
 print(f"Density range: {system.min_density_ratio():.2f} - {system.max_density_ratio():.2f}")
 ```
 
+### WorldEngine (Unified Orchestration) / WorldEngine 统一编排
+
+```python
+from pymo.kernel.world_engine import WorldEngine, WorldEngineConfig
+
+# Configure all subsystems
+config = WorldEngineConfig(
+    enable_physics3d=True,
+    enable_sph=True,
+    enable_chemistry=True,
+    enable_ecology=True,
+    enable_geology=True,       # NEW: geology pipeline
+)
+engine = WorldEngine(config)
+
+# Run simulation — all subsystems coupled automatically
+for _ in range(300):
+    engine.tick()
+
+# Access geology state
+geo = engine.geology_solver
+print(f"Surface temperature: {geo.grid.temperature[0,0,-1]:.1f} K")
+```
+
+### OpenGL GPU-Instanced Rendering / OpenGL GPU实例化渲染
+
+```python
+from pymo.viz.gl_renderer import GLRenderer, RendererConfig
+from pymo.viz.snapshot import build_snapshot_from_world
+from pymo.viz.double_buffer import DoubleBuffer
+
+buffer = DoubleBuffer()
+renderer = GLRenderer(buffer, RendererConfig(window_size=(1280, 720)))
+
+# Render loop — reads immutable snapshots, drives nothing
+while renderer.running:
+    snapshot = build_snapshot_from_world(engine.world, engine.geology_solver)
+    buffer.swap(snapshot)
+    renderer.render_frame()
+```
+
+### Geology Module / 地质模块
+
+```python
+from pymo.geology import GeologySolver, GeologySolverConfig, create_stratified_grid
+from pymo.geology.rock_materials import get_material_properties_for_gpu
+
+# Create a 32×32×16 geology grid with sedimentary layers
+grid = create_stratified_grid(nx=32, ny=32, nz=16, cell_size=10.0)
+solver = GeologySolver(grid, GeologySolverConfig())
+
+# Step geological processes (thermal conduction + sedimentation)
+solver.step(dt_years=1000.0)
+
+# Query rock properties
+props = get_material_properties_for_gpu()  # → (rock_ids, colors, emissivities)
+```
+
 ## Module Reference / 模块参考
 
 | Module / 模块 | Description / 说明 |
@@ -124,14 +184,22 @@ print(f"Density range: {system.min_density_ratio():.2f} - {system.max_density_ra
 | `kernel.solver` | 2D impulse-based contact solver / 2D基于冲量的接触求解器 |
 | `kernel.world` | 2D physics world / 2D物理世界 |
 | `kernel.world3d` | 3D physics world / 3D物理世界 |
+| `kernel.world_engine` | Unified orchestration: physics + SPH + chemistry + ecology + geology / 统一编排 |
 | `kernel.math3d` | Quaternion math, GJK support / 四元数数学、GJK支撑 |
 | `kernel.integrators` | Velocity-Verlet integrator (Numba JIT) / 速度Verlet积分器 |
+| `geology.rock_materials` | Rock material definitions (granite, basalt, sandstone, etc.) / 岩石材料库 |
+| `geology.geology_grid` | 3D voxel grid with flat-array storage / 3D体素网格 |
+| `geology.geology_solver` | Geology process orchestrator / 地质过程编排器 |
+| `geology.processes.thermal` | Implicit heat conduction PDE (scipy.sparse) / 隐式热传导PDE |
+| `geology.processes.sedimentation` | Stratigraphic layering / 地层层序 |
 | `rules.thermal` | Fourier heat conduction / 傅里叶热传导 |
 | `rules.fluid` | SPH fluid solver / SPH流体求解器 |
 | `rules.fracture` | Brittle fracture mechanics / 脆性断裂力学 |
 | `ai.observer` | World state observer / 世界状态观察器 |
 | `ai.law_discovery` | Symbolic regression / 符号回归 |
 | `ai.closed_loop` | Closed-loop AI reasoning / 闭环AI推理 |
+| `viz.gl_renderer` | OpenGL GPU-instanced renderer (PBR + frustum cull) / OpenGL GPU实例化渲染器 |
+| `viz.snapshot` | Double-buffered immutable scene snapshots / 双缓冲不可变场景快照 |
 | `viz.viewer` | 2D PyVista renderer / 2D PyVista渲染器 |
 | `viz.viewer3d` | 3D PyVista renderer / 3D PyVista渲染器 |
 | `parallel.ray_parallel` | Ray distributed simulation / Ray分布式模拟 |
@@ -143,6 +211,8 @@ pytest -q                    # run all tests / 运行所有测试
 pytest tests/kernel/         # kernel tests only / 仅内核测试
 pytest tests/rules/          # rules tests only / 仅规则测试
 pytest tests/ai/             # AI tests only / 仅AI测试
+pytest tests/geology/        # geology tests only / 仅地质测试
+pytest tests/viz/            # viz tests only / 仅渲染测试
 ```
 
 ## Project Status / 项目状态
@@ -153,8 +223,19 @@ pytest tests/ai/             # AI tests only / 仅AI测试
 | P1: 2D MVP / 2D最小可行产品 | Done / 完成 | 16 pass |
 | P2.2: Multi-physics rules / 多物理规则 | Done / 完成 | 22 pass |
 | P2.1: 3D physics kernel / 3D物理内核 | Done / 完成 | 10 pass |
+| P3: OpenGL rendering / OpenGL渲染 | Done / 完成 | 190 pass |
 | P4.1: Ray parallel / Ray并行 | Done / 完成 | 4 pass |
-| **Total** | | **52 pass** |
+| P5: Geology module / 地质模块 | Phase 1 / 第一阶段 | 7 pass (4+3 skip) |
+| **Total** | | **190+ pass** |
+
+## Recent Changes / 近期变更
+
+### v0.4 — Geology Module + OpenGL Rendering / 地质模块 + OpenGL渲染
+
+- **Geology system** (`src/pymo/geology/`): Stratigraphy, thermal conduction (implicit Euler PDE), sedimentation processes, 9 built-in rock types
+- **OpenGL renderer** (`src/pymo/viz/gl_renderer.py`): GPU-instanced rendering, PBR shaders with temperature emission, frustum culling, double-buffered snapshots
+- **WorldEngine** (`src/pymo/kernel/world_engine.py`): Unified orchestration layer coupling physics, SPH, chemistry, ecology, and geology
+- **Bug fixes**: Model matrix column-major transpose, scale propagation, view/projection matrix transpose for moderngl compatibility
 
 ## License / 许可证
 
