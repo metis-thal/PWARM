@@ -33,6 +33,7 @@ def build_thermal_matrices(
     rho_c: np.ndarray,          # (N,) ρc per cell
     dt: float,
     cell_size: float,
+    radiogenic_heat: float = 1.0e-6,
 ) -> tuple[csr_matrix, np.ndarray]:
     """Build implicit system matrix A and RHS vector b for ∂T/∂t = ∇·(k∇T)/(ρc) + H/(ρc).
 
@@ -92,7 +93,7 @@ def build_thermal_matrices(
                 rho_c_i = rho_c[i]
 
                 diag_val = 1.0  # Identity
-                source = dt * ThermalConfig.radiogenic_heat / rho_c_i  # will be added to b
+                source = dt * radiogenic_heat / rho_c_i  # will be added to b
 
                 # X neighbors
                 if ix > 0:
@@ -165,7 +166,7 @@ def solve_thermal_step(
     rho_c = np.array([rock_materials[rid].density * rock_materials[rid].specific_heat for rid in rock_ids], dtype=np.float32)
 
     # Build system matrix (can be cached if dt, grid, materials unchanged)
-    A, _ = build_thermal_matrices(grid, rock_k, rho_c, config.dt, grid.config.cell_size)
+    A, _ = build_thermal_matrices(grid, rock_k, rho_c, config.dt, grid.config.cell_size, config.radiogenic_heat)
 
     # RHS: T_old + dt * H/(ρc)
     b = grid.temperature.copy()

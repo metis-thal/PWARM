@@ -21,6 +21,8 @@ from .processes.thermal import (
     get_material_dict,
 )
 from .processes.sedimentation import SedimentationConfig, create_initial_stratigraphy
+from .processes.erosion import ErosionConfig, apply_stream_power_erosion
+from .processes.tectonics import TectonicConfig, apply_tectonic_uplift, generate_uplift_field
 
 
 @dataclass(slots=True)
@@ -43,6 +45,19 @@ class GeologySolverConfig:
     mantle_heat_flux: float = 0.065       # W/m²
     radiogenic_heat: float = 1.0e-6       # W/m³
     geothermal_gradient: float = 0.025    # K/m initial gradient
+
+    # Erosion (Stream Power Law)
+    enable_erosion: bool = True
+    erosion_K: float = 1.0e-5             # erodibility
+    erosion_m: float = 0.5                # area exponent
+    erosion_n: float = 1.0                # slope exponent
+    diffusion_coeff: float = 0.01         # hillslope diffusion (m²/yr)
+
+    # Tectonics
+    enable_tectonics: bool = True
+    base_uplift_rate: float = 0.005       # m/yr (5 mm/yr for Himalayas)
+    uplift_front_position: float = 0.5    # fraction of domain
+    uplift_front_width: float = 0.3       # fraction of domain
 
     # Solver
     thermal_dt: float = 1000.0            # years per thermal step
@@ -81,6 +96,24 @@ class GeologySolver:
             radiogenic_heat=self.config.radiogenic_heat,
         )
 
+        # Erosion config
+        self.erosion_config = ErosionConfig(
+            K=self.config.erosion_K,
+            m=self.config.erosion_m,
+            n=self.config.erosion_n,
+            diffusion_coeff=self.config.diffusion_coeff,
+        )
+
+        # Tectonic config
+        self.tectonic_config = TectonicConfig(
+            base_uplift_rate=self.config.base_uplift_rate,
+            front_position=self.config.uplift_front_position,
+            front_width=self.config.uplift_front_width,
+        )
+
+        # Pre-computed uplift field (reused across steps)
+        self._uplift_field: np.ndarray | None = None
+
         # Time tracking
         self.time = 0.0        # years
         self.step_count = 0
@@ -114,7 +147,16 @@ class GeologySolver:
         if not self._initialized:
             self.initialize()
 
-        # Thermal conduction (sub-step if needed)
+        # 1. Tectonic uplift (pushes surface upward)
+        if self.config.enable_tectonics:
+            if self._uplift_field is None:
+                self._uplift_field = generate_uplift_field(
+                    self.grid_config.nx, self.grid_config.ny,
+                    self.tectonic_config, seed=42,
+                )
+            self._apply_tectonics(dt)
+
+        # 2. Thermal conduction (sub-step if needed)
         thermal_dt = self.config.thermal_dt
         remaining = dt
         while remaining > 1e-6:
@@ -123,11 +165,115 @@ class GeologySolver:
             solve_thermal_step(self.grid, self.thermal_config, self.materials)
             remaining -= step_dt
 
-        # TODO: Phase 2 - Stream Power Law erosion/sedimentation
-        # TODO: Phase 3 - Tectonic stress, Mohr-Coulomb failure
+        # 3. Erosion (Stream Power Law + hillslope diffusion)
+        if self.config.enable_erosion:
+            self._apply_erosion(dt)
 
         self.time += dt
         self.step_count += 1
+
+    def _apply_tectonics(self, dt: float) -> None:
+        """Apply tectonic uplift to surface cells."""
+        nx, ny = self.grid_config.nx, self.grid_config.ny
+        nz = self.grid_config.nz
+        cell_size = self.grid_config.cell_size
+
+        # Find surface elevation and apply uplift
+        for iy in range(ny):
+            for ix in range(nx):
+                # Find topmost non-air cell
+                iz_surface = -1
+                for iz in range(nz - 1, -1, -1):
+                    idx = ix + nx * (iy + ny * iz)
+                    if self.grid.rock_id[idx] != 0:  # non-air
+                        iz_surface = iz
+                        break
+
+                if iz_surface < 0:
+                    continue
+
+                # Get uplift amount
+                flat_idx = ix + nx * iy
+                uplift_amount = self._uplift_field[flat_idx] * dt
+
+                # Apply elevation feedback
+                elev = self.grid_config.origin[2] + (iz_surface + 0.5) * cell_size
+                if self.tectonic_config.elevation_feedback:
+                    factor = 1.0 - self.tectonic_config.feedback_strength * min(
+                        elev / self.tectonic_config.max_elevation, 1.0
+                    )
+                    uplift_amount *= max(factor, 0.1)
+
+                # Convert to cells and shift surface
+                cell_uplift = int(uplift_amount / cell_size)
+                if cell_uplift > 0 and iz_surface + cell_uplift < nz:
+                    # Shift columns upward
+                    for dy in range(cell_uplift):
+                        iz_from = iz_surface - dy
+                        iz_to = iz_surface + cell_uplift - dy
+                        if iz_from >= 0 and iz_to < nz:
+                            for ix2 in range(max(0, ix - 1), min(nx, ix + 2)):
+                                idx_from = ix2 + nx * (iy + ny * iz_from)
+                                idx_to = ix2 + nx * (iy + ny * iz_to)
+                                self.grid.rock_id[idx_to] = self.grid.rock_id[idx_from]
+                                self.grid.temperature[idx_to] = self.grid.temperature[idx_from]
+
+    def _apply_erosion(self, dt: float) -> None:
+        """Apply Stream Power Law erosion to surface."""
+        nx, ny = self.grid_config.nx, self.grid_config.ny
+        nz = self.grid_config.nz
+        cell_size = self.grid_config.cell_size
+
+        # Extract surface elevation
+        surface_elev = np.zeros(nx * ny, dtype=np.float32)
+        surface_rock = np.zeros(nx * ny, dtype=np.uint16)
+
+        for iy in range(ny):
+            for ix in range(nx):
+                iz_surface = -1
+                for iz in range(nz - 1, -1, -1):
+                    idx = ix + nx * (iy + ny * iz)
+                    if self.grid.rock_id[idx] != 0:
+                        iz_surface = iz
+                        break
+                flat_idx = ix + nx * iy
+                if iz_surface >= 0:
+                    surface_elev[flat_idx] = self.grid_config.origin[2] + (iz_surface + 0.5) * cell_size
+                    surface_rock[flat_idx] = self.grid.rock_id[ix + nx * (iy + ny * iz_surface)]
+
+        # Compute erosion
+        erosion = apply_stream_power_erosion(
+            surface_elev, surface_rock,
+            nx, ny, cell_size,
+            self.erosion_config, dt,
+        )
+
+        # Apply erosion to grid (remove material from surface cells)
+        for iy in range(ny):
+            for ix in range(nx):
+                flat_idx = ix + nx * iy
+                erosion_m = erosion[flat_idx]
+                cells_to_remove = int(erosion_m / cell_size)
+
+                if cells_to_remove <= 0:
+                    continue
+
+                # Find surface
+                iz_surface = -1
+                for iz in range(nz - 1, -1, -1):
+                    idx = ix + nx * (iy + ny * iz)
+                    if self.grid.rock_id[idx] != 0:
+                        iz_surface = iz
+                        break
+
+                if iz_surface < 0:
+                    continue
+
+                # Remove cells from surface
+                for dy in range(min(cells_to_remove, iz_surface + 1)):
+                    idx = ix + nx * (iy + ny * (iz_surface - dy))
+                    self.grid.rock_id[idx] = 0  # air
+                    self.grid.temperature[idx] = self.config.surface_temp
 
     def get_slice_xy(self, iz: int) -> dict:
         """Get XY slice for rendering."""
