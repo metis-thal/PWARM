@@ -48,7 +48,7 @@ DATASETS = {
         "initial": "data/terrain/terrain_everest.npy",
         "simulation": "data/terrain/everest_simulation",
         "cell_size": 40.0,
-        "vertical_exag": 2.0,
+        "vertical_exag": 1.0,  # Natural proportions
     },
     "grand_canyon": {
         "name": "大峡谷",
@@ -56,7 +56,7 @@ DATASETS = {
         "initial": "data/terrain/grand_canyon.npy",
         "simulation": None,
         "cell_size": 40.0,
-        "vertical_exag": 5.0,
+        "vertical_exag": 1.0,
     },
     "mt_fuji": {
         "name": "富士山",
@@ -64,7 +64,7 @@ DATASETS = {
         "initial": "data/terrain/mt_fuji.npy",
         "simulation": None,
         "cell_size": 40.0,
-        "vertical_exag": 2.0,
+        "vertical_exag": 1.0,
     },
     "zhangjiajie": {
         "name": "张家界",
@@ -72,7 +72,7 @@ DATASETS = {
         "initial": "data/terrain/zhangjiajie.npy",
         "simulation": None,
         "cell_size": 40.0,
-        "vertical_exag": 3.0,
+        "vertical_exag": 1.0,
     },
 }
 
@@ -160,15 +160,14 @@ def load_snapshots(dataset_key):
 
 
 # ============================================================
-# Mesh creation — smooth, realistic
+# Mesh creation — smooth, realistic like a 3D model
 # ============================================================
 
 def create_terrain_mesh(elevation, cell_size, vertical_exag=1.0):
     """Create a smooth PyVista StructuredGrid from heightmap.
-       Uses 2x upsample for smoothness without overloading Intel GPU.
+       Uses 4x upsample for smooth surface (128->512 = 262K verts).
     """
-    # Upsample 2x for smooth triangles (128->256 = 65K verts, safe)
-    factor = 2
+    factor = 4
     elev_smooth = ndimage_zoom(elevation, factor, order=3).astype(np.float64)
     ny, nx = elev_smooth.shape
     smooth_cell = cell_size / factor
@@ -180,12 +179,7 @@ def create_terrain_mesh(elevation, cell_size, vertical_exag=1.0):
 
     grid = pv.StructuredGrid(xx, yy, zz)
 
-    # Per-vertex RGB colors based on elevation
-    elev_min = elevation.min()
-    elev_max = elevation.max()
-    colors = elevation_to_colors(elev_smooth, elev_min, elev_max)
-
-    grid["RGB"] = colors.astype(np.float32)
+    # Store elevation as scalar for smooth shading
     grid["Elevation"] = elev_smooth.ravel(order="F").astype(np.float32)
 
     return grid
@@ -198,8 +192,8 @@ def create_cross_section_wall(elevation, cell_size, vertical_exag=1.0,
     if slice_x is None:
         slice_x = nx // 2
 
-    # Use 2x upsampled data for smooth wall
-    factor = 2
+    # Use 4x upsampled data for smooth wall
+    factor = 4
     elev_smooth = ndimage_zoom(elevation, factor, order=3).astype(np.float64)
     sny, snx = elev_smooth.shape
     smooth_cell = cell_size / factor
@@ -231,14 +225,10 @@ def create_cross_section_wall(elevation, cell_size, vertical_exag=1.0,
     points = np.vstack([points_top, points_bot])
     wall = pv.PolyData(points, faces)
 
-    # Color: gradient from brown (deep) to tan (surface)
-    depth_colors = np.zeros((2 * sny, 3), dtype=np.float32)
-    for i in range(sny):
-        t = i / max(sny - 1, 1)
-        c = [0.35 + 0.2 * t, 0.25 + 0.15 * t, 0.15 + 0.1 * t]
-        depth_colors[i] = c
-        depth_colors[sny + i] = c
-    wall["RGB"] = depth_colors
+    # Store elevation for coloring
+    elev_vals = np.concatenate([profile * vertical_exag,
+                                np.full(sny, base_depth * vertical_exag)])
+    wall["Elevation"] = elev_vals.astype(np.float32)
 
     return wall
 
@@ -344,6 +334,9 @@ class TerrainViewer:
             line_width=2, color="white"
         )
 
+        # Enable lighting for realistic rendering
+        self.plotter.enable_lightkit()
+
         # Actors
         self.terrain_actor = None
         self.wall_actor = None
@@ -382,20 +375,23 @@ class TerrainViewer:
         if self.wall_actor is not None:
             self.plotter.remove_actor(self.wall_actor)
 
-        # Create smooth mesh with realistic colors
+        # Create smooth mesh
         mesh = create_terrain_mesh(
             elev, self.dataset["cell_size"], self.dataset["vertical_exag"]
         )
 
-        # Use RGB coloring — no smooth_shading on Intel GPU to avoid crash
+        # Render with smooth shading + terrain colormap — looks like a real 3D model
         self.terrain_actor = self.plotter.add_mesh(
             mesh,
-            scalars="RGB",
-            rgb=True,
-            specular=0.15,
-            ambient=0.35,
-            diffuse=0.65,
+            scalars="Elevation",
+            cmap="terrain",
+            smooth_shading=True,
+            specular=0.2,
+            specular_power=20,
+            ambient=0.3,
+            diffuse=0.7,
             show_scalar_bar=False,
+            lighting=True,
         )
 
         # Cross-section
@@ -413,8 +409,12 @@ class TerrainViewer:
             elev, self.dataset["cell_size"], self.dataset["vertical_exag"]
         )
         self.wall_actor = self.plotter.add_mesh(
-            wall, scalars="RGB", rgb=True,
-            show_edges=False, opacity=0.95,
+            wall,
+            scalars="Elevation",
+            cmap="terrain",
+            smooth_shading=True,
+            show_edges=False,
+            opacity=0.95,
         )
 
     # ----------------------------------------------------------
