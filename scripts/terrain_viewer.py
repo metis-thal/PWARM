@@ -1,27 +1,34 @@
 """
-Interactive 3D Terrain Evolution Viewer
+PWARM Terrain Evolution Viewer — Dual-Mode (Professional + Layperson)
 
 Controls:
-    Mouse drag     - Rotate view
-    Mouse scroll   - Zoom in/out
-    ← / → arrows  - Switch time snapshots (t0, t100, ..., t1000)
-    ↑ / ↓ arrows  - Switch dataset (Everest/Grand Canyon/Fuji/Zhangjiajie)
-    S              - Toggle cross-section view
-    R              - Reset view
-    Q / Esc        - Quit
+    Mouse drag     — Rotate view
+    Mouse scroll   — Zoom in/out
+    ← / → arrows  — Switch time snapshots
+    ↑ / ↓ arrows  — Switch dataset (Everest/Grand Canyon/Fuji/Zhangjiajie)
+    S              — Toggle cross-section view
+    M              — Toggle Professional / Layperson mode
+    A              — Auto-play animation (t0 → t1M)
+    R              — Reset view
+    Q / Esc        — Quit
 
 Usage:
     python scripts/terrain_viewer.py
     python scripts/terrain_viewer.py --dataset everest
-    python scripts/terrain_viewer.py --data-dir data/terrain/everest_simulation
 """
 import os
 import sys
+import time
 import argparse
 import numpy as np
+from scipy.ndimage import zoom as ndimage_zoom
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+# Support PyInstaller frozen exe
+if getattr(sys, 'frozen', False):
+    PROJECT_ROOT = os.path.dirname(sys.executable)
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 try:
     import pyvista as pv
@@ -36,28 +43,32 @@ except ImportError:
 
 DATASETS = {
     "everest": {
-        "name": "珠穆朗玛峰 (Mt. Everest)",
+        "name": "珠穆朗玛峰",
+        "name_en": "Mt. Everest",
         "initial": "data/terrain/terrain_everest.npy",
         "simulation": "data/terrain/everest_simulation",
         "cell_size": 40.0,
         "vertical_exag": 2.0,
     },
     "grand_canyon": {
-        "name": "大峡谷 (Grand Canyon)",
+        "name": "大峡谷",
+        "name_en": "Grand Canyon",
         "initial": "data/terrain/grand_canyon.npy",
-        "simulation": None,  # no simulation yet
+        "simulation": None,
         "cell_size": 40.0,
-        "vertical_exag": 5.0,  # canyon needs more exaggeration
+        "vertical_exag": 5.0,
     },
     "mt_fuji": {
-        "name": "富士山 (Mt. Fuji)",
+        "name": "富士山",
+        "name_en": "Mt. Fuji",
         "initial": "data/terrain/mt_fuji.npy",
         "simulation": None,
         "cell_size": 40.0,
         "vertical_exag": 2.0,
     },
     "zhangjiajie": {
-        "name": "张家界 (Zhangjiajie)",
+        "name": "张家界",
+        "name_en": "Zhangjiajie",
         "initial": "data/terrain/zhangjiajie.npy",
         "simulation": None,
         "cell_size": 40.0,
@@ -66,17 +77,62 @@ DATASETS = {
 }
 
 
+# ============================================================
+# Realistic terrain colormap (as a list for pyvista)
+# ============================================================
+
+TERRAIN_CMAP_COLORS = [
+    [0.15, 0.30, 0.55],   # deep blue-grey (valley floors)
+    [0.20, 0.45, 0.35],   # dark green (vegetated lowlands)
+    [0.35, 0.55, 0.25],   # green (lower slopes)
+    [0.55, 0.60, 0.20],   # yellow-green (mid slopes)
+    [0.70, 0.55, 0.25],   # tan/earth (upper slopes)
+    [0.60, 0.45, 0.20],   # brown (high rock)
+    [0.55, 0.50, 0.45],   # grey (bare rock)
+    [0.80, 0.78, 0.75],   # light grey (high altitude)
+    [0.95, 0.95, 0.97],   # white (snow/peak)
+]
+
+# Build a 256-entry lookup table for per-vertex coloring
+def _build_cmap_lut():
+    positions = np.linspace(0, 1, len(TERRAIN_CMAP_COLORS))
+    colors_arr = np.array(TERRAIN_CMAP_COLORS)
+    x_new = np.linspace(0, 1, 256)
+    lut = np.zeros((256, 3))
+    for i in range(3):
+        lut[:, i] = np.interp(x_new, positions, colors_arr[:, i])
+    return lut
+
+_CMAP_LUT = _build_cmap_lut()
+
+
+def elevation_to_colors(elev_smooth, elev_min, elev_max):
+    """Map elevation array to per-vertex RGB colors."""
+    if elev_max > elev_min:
+        t = (elev_smooth - elev_min) / (elev_max - elev_min)
+    else:
+        t = np.zeros_like(elev_smooth)
+    t = np.clip(t, 0, 1)
+    idx = np.clip((t * 255).astype(int), 0, 255)
+    r = _CMAP_LUT[idx, 0]
+    g = _CMAP_LUT[idx, 1]
+    b = _CMAP_LUT[idx, 2]
+    return np.stack([r.ravel(), g.ravel(), b.ravel()], axis=-1)
+
+
+# ============================================================
+# Data loading
+# ============================================================
+
 def load_snapshots(dataset_key):
-    """Load all available snapshots for a dataset."""
+    """Load all available snapshots for a dataset, sorted by time."""
     ds = DATASETS[dataset_key]
     snapshots = []
 
-    # Load simulation snapshots (from simulation directory)
     sim_dir = os.path.join(PROJECT_ROOT, ds["simulation"]) if ds["simulation"] else None
     if sim_dir and os.path.exists(sim_dir):
         npy_files = [f for f in os.listdir(sim_dir)
                      if f.startswith("elevation_t") and f.endswith(".npy")]
-        # Sort by year number, not alphabetically
         def _year(path):
             t = path.replace("elevation_", "").replace(".npy", "")
             return int(t.replace("t", ""))
@@ -90,79 +146,181 @@ def load_snapshots(dataset_key):
             else:
                 label = f"{yr}年"
             elev = np.load(os.path.join(sim_dir, f))
-            snapshots.append((f"{t_str} ({label})", elev))
+            snapshots.append({"key": t_str, "year": yr, "label": label,
+                              "elevation": elev})
 
-    # Fallback: if no simulation dir, load raw heightmap
     if not snapshots:
         init_path = os.path.join(PROJECT_ROOT, ds["initial"])
         if os.path.exists(init_path):
             elev = np.load(init_path)
-            snapshots.append(("t0 (现在)", elev))
+            snapshots.append({"key": "t0", "year": 0, "label": "现在",
+                              "elevation": elev})
 
     return snapshots
 
 
+# ============================================================
+# Mesh creation — smooth, realistic
+# ============================================================
+
 def create_terrain_mesh(elevation, cell_size, vertical_exag=1.0):
-    """Create PyVista mesh from heightmap."""
-    ny, nx = elevation.shape
+    """Create a smooth PyVista StructuredGrid from heightmap.
+       Uses 2x upsample for smoothness without overloading Intel GPU.
+    """
+    # Upsample 2x for smooth triangles (128->256 = 65K verts, safe)
+    factor = 2
+    elev_smooth = ndimage_zoom(elevation, factor, order=3).astype(np.float64)
+    ny, nx = elev_smooth.shape
+    smooth_cell = cell_size / factor
 
-    # Create coordinate grid
-    x = np.arange(nx) * cell_size
-    y = np.arange(ny) * cell_size
+    x = np.arange(nx) * smooth_cell
+    y = np.arange(ny) * smooth_cell
     xx, yy = np.meshgrid(x, y)
+    zz = elev_smooth * vertical_exag
 
-    # Apply vertical exaggeration
-    zz = elevation * vertical_exag
-
-    # Create structured grid
     grid = pv.StructuredGrid(xx, yy, zz)
-    grid["Elevation"] = elevation.ravel(order="F")
+
+    # Per-vertex RGB colors based on elevation
+    elev_min = elevation.min()
+    elev_max = elevation.max()
+    colors = elevation_to_colors(elev_smooth, elev_min, elev_max)
+
+    grid["RGB"] = colors.astype(np.float32)
+    grid["Elevation"] = elev_smooth.ravel(order="F").astype(np.float32)
 
     return grid
 
 
-def create_cross_section(mesh, elevation, cell_size, vertical_exag=1.0,
-                         slice_pos=None):
-    """Create cross-section through the terrain."""
+def create_cross_section_wall(elevation, cell_size, vertical_exag=1.0,
+                              slice_x=None):
+    """Create a visible cross-section wall showing underground layers."""
     ny, nx = elevation.shape
+    if slice_x is None:
+        slice_x = nx // 2
 
-    if slice_pos is None:
-        slice_pos = nx * cell_size / 2  # middle
+    # Use 2x upsampled data for smooth wall
+    factor = 2
+    elev_smooth = ndimage_zoom(elevation, factor, order=3).astype(np.float64)
+    sny, snx = elev_smooth.shape
+    smooth_cell = cell_size / factor
 
-    # Slice along X axis
-    sliced = mesh.slice(normal="x", origin=(slice_pos, 0, 0))
+    # Get elevation profile along the slice
+    si_x = int(slice_x * factor)
+    si_x = max(0, min(snx - 1, si_x))
+    profile = elev_smooth[:, si_x]
 
-    # Create a wall beneath the slice
-    x = slice_pos
-    y = np.arange(ny) * cell_size
-    z_bottom = np.full_like(y, elevation.min() * vertical_exag - 50)
+    # Create wall points (terrain surface + deep base)
+    base_depth = profile.min() - (profile.max() - profile.min()) * 0.5
+    y_coords = np.arange(sny) * smooth_cell
 
-    # Get elevation along slice
-    iy_slice = int(slice_pos / cell_size)
-    iy_slice = max(0, min(ny - 1, iy_slice))
-    elev_slice = elevation[:, iy_slice] if iy_slice < nx else elevation[:, nx // 2]
+    x_val = slice_x * cell_size
+    points_top = np.column_stack([
+        np.full(sny, x_val), y_coords, profile * vertical_exag,
+    ])
+    points_bot = np.column_stack([
+        np.full(sny, x_val), y_coords,
+        np.full(sny, base_depth * vertical_exag),
+    ])
 
-    # Create wall points
-    points = []
-    for i in range(ny):
-        points.append([x, y[i], elev_slice[i] * vertical_exag])
-    for i in range(ny - 1, -1, -1):
-        points.append([x, y[i], z_bottom[i]])
-
-    points = np.array(points)
+    # Build faces (quads)
     faces = []
-    for i in range(ny - 1):
-        faces.append([4, i, i + 1, 2 * ny - 2 - i, 2 * ny - 1 - i])
-    faces = np.array(faces)
+    for i in range(sny - 1):
+        faces.extend([4, i, i + 1, sny + i + 1, sny + i])
+    faces = np.array(faces, dtype=np.int64)
 
+    points = np.vstack([points_top, points_bot])
     wall = pv.PolyData(points, faces)
-    wall["Elevation"] = np.tile(elev_slice, 2)[:len(points)]
+
+    # Color: gradient from brown (deep) to tan (surface)
+    depth_colors = np.zeros((2 * sny, 3), dtype=np.float32)
+    for i in range(sny):
+        t = i / max(sny - 1, 1)
+        c = [0.35 + 0.2 * t, 0.25 + 0.15 * t, 0.15 + 0.1 * t]
+        depth_colors[i] = c
+        depth_colors[sny + i] = c
+    wall["RGB"] = depth_colors
 
     return wall
 
 
+# ============================================================
+# Layperson text for each time period
+# ============================================================
+
+LAYPERSON_INFO = {
+    0: (
+        "【初始地形】\n"
+        "高山区域：岩石和土壤，等待被雨水冲刷\n"
+        "山谷洼地：将接收从高处冲下来的泥沙"
+    ),
+    100: (
+        "【100 年】\n"
+        "变化非常微弱，肉眼几乎看不出差异\n"
+        "但雨水和风化已经悄悄开始工作"
+    ),
+    200: (
+        "【200 年】\n"
+        "少量泥土从陡峭山坡被冲走\n"
+        "慢慢沉积到谷底"
+    ),
+    500: (
+        "【500 年】\n"
+        "山坡表层土壤在持续流失\n"
+        "山谷底部逐渐有泥沙堆积"
+    ),
+    1000: (
+        "【1000 年】\n"
+        "短时间尺度变化微弱\n"
+        "但侵蚀和搬运一直在持续进行"
+    ),
+    5000: (
+        "【5000 年】\n"
+        "山脊棱角开始被磨圆\n"
+        "山谷河道逐渐加深"
+    ),
+    10000: (
+        "【1万 年】\n"
+        "侵蚀效果明显了\n"
+        "山峰变矮，山谷变深，物质在重新分布"
+    ),
+    50000: (
+        "【5万 年】\n"
+        "大量高山岩石被风化剥蚀\n"
+        "碎屑顺着山坡搬运到低处堆积"
+    ),
+    100000: (
+        "【10万 年】\n"
+        "地貌已经发生显著改变\n"
+        "高处不断损失物质，低处不断接收"
+    ),
+    500000: (
+        "【50万 年】\n"
+        "大规模物质迁移：\n"
+        "山体被大幅削低，谷底被大量填高"
+    ),
+    1000000: (
+        "【100万 年】\n"
+        "百万年的侵蚀搬运\n"
+        "彻底改写了地貌：高处削平、低处填满"
+    ),
+}
+
+
+def get_layperson_text(year):
+    """Get layperson description for a given year."""
+    best_key = 0
+    for k in LAYPERSON_INFO:
+        if k <= year:
+            best_key = k
+    return LAYPERSON_INFO[best_key]
+
+
+# ============================================================
+# Main Viewer Class
+# ============================================================
+
 class TerrainViewer:
-    """Interactive 3D terrain viewer."""
+    """Interactive 3D terrain viewer with dual-mode UI."""
 
     def __init__(self, dataset_key="everest"):
         self.dataset_key = dataset_key
@@ -170,185 +328,259 @@ class TerrainViewer:
         self.snapshots = load_snapshots(dataset_key)
         self.current_idx = 0
         self.show_cross_section = False
-        self.cross_section_pos = None
+        self.professional_mode = True
+        self.auto_play = False
+        self.auto_play_timer = 0.0
 
-        # Create plotter
+        # PyVista plotter — OFF_SCREEN=False for interactive window
         self.plotter = pv.Plotter(
             window_size=[1400, 900],
-            title=f"PWARM 地形演化查看器 - {self.dataset['name']}",
+            title="PWARM Terrain Evolution Viewer",
+            off_screen=False,
         )
-        self.plotter.set_background("#1a1a2e")
+        self.plotter.set_background("#0d1117")
         self.plotter.add_axes(
             xlabel="X (m)", ylabel="Y (m)", zlabel="Elevation (m)",
-            line_width=2
+            line_width=2, color="white"
         )
 
-        # Add initial terrain
+        # Actors
         self.terrain_actor = None
         self.wall_actor = None
-        self.label_actor = None
-        self.info_actor = None
-        self.update_terrain()
+        self.text_actor = None
+        self.legend_actor = None
+        self.controls_actor = None
 
-        # Add controls info
-        self.add_controls_text()
+        # Initial render
+        self._update_terrain()
+        self._update_ui()
 
-        # Bind keyboard
-        self.plotter.add_key_event("Left", self.prev_snapshot)
-        self.plotter.add_key_event("Right", self.next_snapshot)
-        self.plotter.add_key_event("Up", self.prev_dataset)
-        self.plotter.add_key_event("Down", self.next_dataset)
-        self.plotter.add_key_event("s", self.toggle_cross_section)
-        self.plotter.add_key_event("r", self.reset_view)
+        # Keyboard bindings
+        self.plotter.add_key_event("Left", self._prev_snapshot)
+        self.plotter.add_key_event("Right", self._next_snapshot)
+        self.plotter.add_key_event("Up", self._prev_dataset)
+        self.plotter.add_key_event("Down", self._next_dataset)
+        self.plotter.add_key_event("s", self._toggle_cross_section)
+        self.plotter.add_key_event("m", self._toggle_mode)
+        self.plotter.add_key_event("a", self._toggle_auto_play)
+        self.plotter.add_key_event("r", lambda: self.plotter.reset_camera())
         self.plotter.add_key_event("q", lambda: self.plotter.close())
         self.plotter.add_key_event("Escape", lambda: self.plotter.close())
 
-    def add_controls_text(self):
-        """Add control instructions overlay."""
-        controls = (
-            "Controls:\n"
-            "  ←/→ : Switch time\n"
-            "  ↑/↓ : Switch dataset\n"
-            "  S : Cross-section\n"
-            "  R : Reset view\n"
-            "  Q : Quit"
-        )
-        self.plotter.add_text(
-            controls, position="upper_right",
-            font_size=11, color="white",
-            font_family="courier",
-            background_color=(0.1, 0.1, 0.2, 0.8),
-        )
+    # ----------------------------------------------------------
+    # Terrain rendering
+    # ----------------------------------------------------------
 
-    def update_terrain(self):
-        """Update the displayed terrain."""
-        label, elev = self.snapshots[self.current_idx]
+    def _update_terrain(self):
+        """Rebuild and display terrain mesh."""
+        snap = self.snapshots[self.current_idx]
+        elev = snap["elevation"]
 
         # Remove old actors
         if self.terrain_actor is not None:
             self.plotter.remove_actor(self.terrain_actor)
         if self.wall_actor is not None:
             self.plotter.remove_actor(self.wall_actor)
-        if self.info_actor is not None:
-            self.plotter.remove_actor(self.info_actor)
 
-        # Create mesh
+        # Create smooth mesh with realistic colors
         mesh = create_terrain_mesh(
             elev, self.dataset["cell_size"], self.dataset["vertical_exag"]
         )
 
-        # Add terrain
+        # Use RGB coloring — no smooth_shading on Intel GPU to avoid crash
         self.terrain_actor = self.plotter.add_mesh(
             mesh,
-            scalars="Elevation",
-            cmap="terrain",
-            show_scalar_bar=True,
-            scalar_bar_args={"title": "Elevation (m)"},
-            lighting=True,
-            ambient=0.3,
-            diffuse=0.7,
-            specular=0.2,
+            scalars="RGB",
+            rgb=True,
+            specular=0.15,
+            ambient=0.35,
+            diffuse=0.65,
+            show_scalar_bar=False,
         )
 
-        # Add cross-section if enabled
+        # Cross-section
         if self.show_cross_section:
-            self.update_cross_section(elev)
+            self._update_cross_section(elev)
 
-        # Update info text
-        ny, nx = elev.shape
-        info = (
-            f"Dataset: {self.dataset['name']}\n"
-            f"Time: {label}\n"
-            f"Grid: {nx}×{nx} | Cell: {self.dataset['cell_size']}m\n"
-            f"Max: {elev.max():.1f}m | Min: {elev.min():.1f}m | Mean: {elev.mean():.1f}m\n"
-            f"Snapshot: {self.current_idx + 1}/{len(self.snapshots)}"
-        )
-        self.info_actor = self.plotter.add_text(
-            info, position="upper_left",
-            font_size=11, color="white",
-            font_family="courier",
-            background_color=(0.1, 0.1, 0.2, 0.8),
-        )
-
-        # Reset camera for new dataset
         self.plotter.reset_camera()
 
-    def update_cross_section(self, elev):
-        """Update cross-section view."""
+    def _update_cross_section(self, elev):
+        """Add cross-section wall."""
         if self.wall_actor is not None:
             self.plotter.remove_actor(self.wall_actor)
 
-        mesh = create_terrain_mesh(
+        wall = create_cross_section_wall(
             elev, self.dataset["cell_size"], self.dataset["vertical_exag"]
         )
-        wall = create_cross_section(
-            mesh, elev, self.dataset["cell_size"], self.dataset["vertical_exag"]
-        )
-
         self.wall_actor = self.plotter.add_mesh(
-            wall, scalars="Elevation", cmap="terrain",
-            show_edges=True, edge_color="black",
+            wall, scalars="RGB", rgb=True,
+            show_edges=False, opacity=0.95,
         )
 
-    def next_snapshot(self):
-        """Go to next time snapshot."""
+    # ----------------------------------------------------------
+    # UI text — dual mode
+    # ----------------------------------------------------------
+
+    def _update_ui(self):
+        """Update all overlay text based on current mode."""
+        if self.text_actor is not None:
+            self.plotter.remove_actor(self.text_actor)
+        if self.legend_actor is not None:
+            self.plotter.remove_actor(self.legend_actor)
+        if self.controls_actor is not None:
+            self.plotter.remove_actor(self.controls_actor)
+
+        if self.professional_mode:
+            self._draw_professional_ui()
+        else:
+            self._draw_layperson_ui()
+
+    def _draw_professional_ui(self):
+        """Professional mode: full technical info."""
+        snap = self.snapshots[self.current_idx]
+        elev = snap["elevation"]
+        ny, nx = elev.shape
+        ds_name = f"{self.dataset['name']} ({self.dataset['name_en']})"
+
+        info = (
+            f"Dataset: {ds_name}\n"
+            f"Time: {snap['key']} ({snap['label']})\n"
+            f"Grid: {nx}x{nx} | Cell: {self.dataset['cell_size']:.0f}m\n"
+            f"Max: {elev.max():.1f}m | Min: {elev.min():.1f}m | Mean: {elev.mean():.1f}m\n"
+            f"Snapshot: {self.current_idx + 1}/{len(self.snapshots)}"
+        )
+        self.text_actor = self.plotter.add_text(
+            info, position="upper_left", font_size=12, color="white"
+        )
+
+        controls = (
+            "Controls:\n"
+            "  <-/-> : Switch time\n"
+            "  Up/Down : Switch dataset\n"
+            "  S : Cross-section\n"
+            "  M : Toggle mode\n"
+            "  A : Auto-play\n"
+            "  R : Reset view\n"
+            "  Q : Quit"
+        )
+        self.controls_actor = self.plotter.add_text(
+            controls, position="upper_right", font_size=11, color="white"
+        )
+
+    def _draw_layperson_ui(self):
+        """Layperson mode: plain language, big text."""
+        snap = self.snapshots[self.current_idx]
+        ds_name = self.dataset['name']
+
+        info = f"\u3010{ds_name}\u3011\u65f6\u95f4\uff1a{snap['label']}\n"
+        info += get_layperson_text(snap['year'])
+
+        self.text_actor = self.plotter.add_text(
+            info, position="upper_left", font_size=14, color="white"
+        )
+
+        # Bottom legend — emoji-free for font compat
+        legend = (
+            "[Low] Valleys: mud & sand settle here"
+            "   [Mid] Slopes: soil washed away"
+            "   [High] Peaks: bare rock weathering"
+        )
+        self.legend_actor = self.plotter.add_text(
+            legend, position="lower_left", font_size=11, color="#cccccc"
+        )
+
+        controls = (
+            "Left/Right  - Time forward/back\n"
+            "Up/Down     - Switch landscape\n"
+            "S           - Cut mountain, see layers\n"
+            "M           - Pro / Simple mode\n"
+            "A           - Auto-play evolution\n"
+            "R           - Reset view\n"
+            "Q           - Quit\n"
+            "Mouse drag = rotate | Scroll = zoom"
+        )
+        self.controls_actor = self.plotter.add_text(
+            controls, position="upper_right", font_size=11, color="#dddddd"
+        )
+
+    # ----------------------------------------------------------
+    # Navigation
+    # ----------------------------------------------------------
+
+    def _next_snapshot(self):
         if self.current_idx < len(self.snapshots) - 1:
             self.current_idx += 1
-            self.update_terrain()
+            self._update_terrain()
+            self._update_ui()
 
-    def prev_snapshot(self):
-        """Go to previous time snapshot."""
+    def _prev_snapshot(self):
         if self.current_idx > 0:
             self.current_idx -= 1
-            self.update_terrain()
+            self._update_terrain()
+            self._update_ui()
 
-    def next_dataset(self):
-        """Switch to next dataset."""
+    def _next_dataset(self):
         keys = list(DATASETS.keys())
-        idx = keys.index(self.dataset_key)
-        idx = (idx + 1) % len(keys)
-        self.switch_dataset(keys[idx])
+        idx = (keys.index(self.dataset_key) + 1) % len(keys)
+        self._switch_dataset(keys[idx])
 
-    def prev_dataset(self):
-        """Switch to previous dataset."""
+    def _prev_dataset(self):
         keys = list(DATASETS.keys())
-        idx = keys.index(self.dataset_key)
-        idx = (idx - 1) % len(keys)
-        self.switch_dataset(keys[idx])
+        idx = (keys.index(self.dataset_key) - 1) % len(keys)
+        self._switch_dataset(keys[idx])
 
-    def switch_dataset(self, key):
-        """Switch to a different dataset."""
+    def _switch_dataset(self, key):
         self.dataset_key = key
         self.dataset = DATASETS[key]
         self.snapshots = load_snapshots(key)
         self.current_idx = 0
-        self.update_terrain()
+        self._update_terrain()
+        self._update_ui()
 
-    def toggle_cross_section(self):
-        """Toggle cross-section view."""
+    def _toggle_cross_section(self):
         self.show_cross_section = not self.show_cross_section
-        elev = self.snapshots[self.current_idx][1]
+        elev = self.snapshots[self.current_idx]["elevation"]
         if self.show_cross_section:
-            self.update_cross_section(elev)
+            self._update_cross_section(elev)
         else:
             if self.wall_actor is not None:
                 self.plotter.remove_actor(self.wall_actor)
                 self.wall_actor = None
 
-    def reset_view(self):
-        """Reset camera to default view."""
-        self.plotter.reset_camera()
+    def _toggle_mode(self):
+        self.professional_mode = not self.professional_mode
+        self._update_ui()
+
+    def _toggle_auto_play(self):
+        self.auto_play = not self.auto_play
+        self.auto_play_timer = time.time()
+
+    # ----------------------------------------------------------
+    # Main loop
+    # ----------------------------------------------------------
+
+    def _auto_play_tick(self):
+        """Advance auto-play if enabled."""
+        if self.auto_play:
+            now = time.time()
+            if now - self.auto_play_timer > 1.5:
+                if self.current_idx < len(self.snapshots) - 1:
+                    self.current_idx += 1
+                    self._update_terrain()
+                    self._update_ui()
+                else:
+                    self.auto_play = False
+                self.auto_play_timer = now
 
     def show(self):
-        """Show the interactive viewer."""
+        """Run the interactive viewer."""
         self.plotter.show()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Interactive 3D Terrain Viewer")
+    parser = argparse.ArgumentParser(description="PWARM Terrain Viewer")
     parser.add_argument("--dataset", "-d", default="everest",
-                        choices=list(DATASETS.keys()),
-                        help="Initial dataset to load")
+                        choices=list(DATASETS.keys()))
     args = parser.parse_args()
 
     viewer = TerrainViewer(args.dataset)
