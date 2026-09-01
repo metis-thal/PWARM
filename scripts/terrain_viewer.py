@@ -78,46 +78,97 @@ DATASETS = {
 
 
 # ============================================================
-# Realistic terrain colormap (as a list for pyvista)
+# Realistic terrain coloring — based on ELEVATION + SLOPE
+# Real mountains: vegetation on flat ground, bare rock on steep slopes,
+# snow on high peaks. Not a simple elevation-only colormap.
 # ============================================================
 
-TERRAIN_CMAP_COLORS = [
-    [0.15, 0.30, 0.55],   # deep blue-grey (valley floors)
-    [0.20, 0.45, 0.35],   # dark green (vegetated lowlands)
-    [0.35, 0.55, 0.25],   # green (lower slopes)
-    [0.55, 0.60, 0.20],   # yellow-green (mid slopes)
-    [0.70, 0.55, 0.25],   # tan/earth (upper slopes)
-    [0.60, 0.45, 0.20],   # brown (high rock)
-    [0.55, 0.50, 0.45],   # grey (bare rock)
-    [0.80, 0.78, 0.75],   # light grey (high altitude)
-    [0.95, 0.95, 0.97],   # white (snow/peak)
-]
+def compute_terrain_colors(elev_smooth, cell_size):
+    """Compute per-vertex RGB colors based on elevation AND slope.
+    
+    This produces realistic mountain appearance:
+    - Flat lowlands: dark green (forest/vegetation)
+    - Gentle slopes: lighter green (grassland)
+    - Steep slopes: brown/grey (exposed rock)
+    - Very steep: dark grey (cliff faces)
+    - High peaks: white (snow)
+    - High slopes: light grey (alpine rock)
+    """
+    ny, nx = elev_smooth.shape
 
-# Build a 256-entry lookup table for per-vertex coloring
-def _build_cmap_lut():
-    positions = np.linspace(0, 1, len(TERRAIN_CMAP_COLORS))
-    colors_arr = np.array(TERRAIN_CMAP_COLORS)
-    x_new = np.linspace(0, 1, 256)
-    lut = np.zeros((256, 3))
-    for i in range(3):
-        lut[:, i] = np.interp(x_new, positions, colors_arr[:, i])
-    return lut
+    # Compute slope (gradient magnitude) in radians
+    spacing = cell_size / 4.0  # 4x upsample spacing
+    dy, dx = np.gradient(elev_smooth, spacing)
+    slope_rad = np.sqrt(dx**2 + dy**2)
+    slope_deg = np.degrees(slope_rad)
 
-_CMAP_LUT = _build_cmap_lut()
-
-
-def elevation_to_colors(elev_smooth, elev_min, elev_max):
-    """Map elevation array to per-vertex RGB colors."""
-    if elev_max > elev_min:
-        t = (elev_smooth - elev_min) / (elev_max - elev_min)
+    # Normalize elevation to [0, 1]
+    e_min, e_max = elev_smooth.min(), elev_smooth.max()
+    if e_max > e_min:
+        e_norm = (elev_smooth - e_min) / (e_max - e_min)
     else:
-        t = np.zeros_like(elev_smooth)
-    t = np.clip(t, 0, 1)
-    idx = np.clip((t * 255).astype(int), 0, 255)
-    r = _CMAP_LUT[idx, 0]
-    g = _CMAP_LUT[idx, 1]
-    b = _CMAP_LUT[idx, 2]
-    return np.stack([r.ravel(), g.ravel(), b.ravel()], axis=-1)
+        e_norm = np.zeros_like(elev_smooth)
+
+    # Base color from elevation (vegetation zones)
+    # Low: dark green → Mid: brown → High: grey → Peak: white
+    r_base = np.where(e_norm < 0.3,
+                       0.15 + 0.3 * (e_norm / 0.3),      # dark green → olive
+              np.where(e_norm < 0.6,
+                       0.45 + 0.2 * ((e_norm - 0.3) / 0.3),  # olive → brown
+              np.where(e_norm < 0.85,
+                       0.65 + 0.15 * ((e_norm - 0.6) / 0.25), # brown → grey
+                       0.80 + 0.18 * ((e_norm - 0.85) / 0.15) # grey → white
+                       )))
+    g_base = np.where(e_norm < 0.3,
+                       0.40 + 0.15 * (e_norm / 0.3),      # green → yellow-green
+              np.where(e_norm < 0.6,
+                       0.55 - 0.15 * ((e_norm - 0.3) / 0.3), # yellow-green → brown
+              np.where(e_norm < 0.85,
+                       0.40 - 0.1 * ((e_norm - 0.6) / 0.25),  # brown → grey
+                       0.78 + 0.2 * ((e_norm - 0.85) / 0.15)  # grey → white
+                       )))
+    b_base = np.where(e_norm < 0.3,
+                       0.15 + 0.05 * (e_norm / 0.3),      # low blue in shadows
+              np.where(e_norm < 0.6,
+                       0.20 + 0.05 * ((e_norm - 0.3) / 0.3),
+              np.where(e_norm < 0.85,
+                       0.25 + 0.15 * ((e_norm - 0.6) / 0.25),
+                       0.40 + 0.57 * ((e_norm - 0.85) / 0.15)
+                       )))
+
+    # Slope effect: steep slopes → more grey/brown (exposed rock)
+    # Flatten the base color toward rock colors on steep terrain
+    rock_r, rock_g, rock_b = 0.50, 0.45, 0.40  # bare rock color
+    slope_factor = np.clip((slope_deg - 15) / 30, 0, 1)  # 15°-45° transition
+
+    # On steep slopes, override vegetation colors with rock
+    r = r_base * (1 - slope_factor) + rock_r * slope_factor
+    g = g_base * (1 - slope_factor) + rock_g * slope_factor
+    b = b_base * (1 - slope_factor) + rock_b * slope_factor
+
+    # Very steep (cliffs > 45°): dark rock
+    cliff_factor = np.clip((slope_deg - 45) / 20, 0, 1)
+    r = r * (1 - cliff_factor) + 0.30 * cliff_factor
+    g = g * (1 - cliff_factor) + 0.28 * cliff_factor
+    b = b * (1 - cliff_factor) + 0.25 * cliff_factor
+
+    # High altitude + flat: snow cap
+    snow_factor = np.clip((e_norm - 0.8) * 5, 0, 1) * (1 - slope_factor)
+    r = r * (1 - snow_factor) + 0.95 * snow_factor
+    g = g * (1 - snow_factor) + 0.95 * snow_factor
+    b = b * (1 - snow_factor) + 0.98 * snow_factor
+
+    # Add subtle noise for natural variation (not perfectly smooth)
+    np.random.seed(42)
+    noise = np.random.rand(ny, nx).astype(np.float64) * 0.04 - 0.02
+    r = np.clip(r + noise, 0, 1)
+    g = np.clip(g + noise, 0, 1)
+    b = np.clip(b + noise, 0, 1)
+
+    colors = np.stack([r.ravel(order="F"),
+                       g.ravel(order="F"),
+                       b.ravel(order="F")], axis=-1).astype(np.float32)
+    return colors
 
 
 # ============================================================
@@ -164,7 +215,7 @@ def load_snapshots(dataset_key):
 # ============================================================
 
 def create_terrain_mesh(elevation, cell_size, vertical_exag=1.0):
-    """Create a smooth PyVista StructuredGrid from heightmap.
+    """Create a smooth PyVista StructuredGrid with realistic slope-based coloring.
        Uses 4x upsample for smooth surface (128->512 = 262K verts).
     """
     factor = 4
@@ -179,8 +230,9 @@ def create_terrain_mesh(elevation, cell_size, vertical_exag=1.0):
 
     grid = pv.StructuredGrid(xx, yy, zz)
 
-    # Store elevation as scalar for smooth shading
-    grid["Elevation"] = elev_smooth.ravel(order="F").astype(np.float32)
+    # Compute realistic colors based on elevation + slope
+    colors = compute_terrain_colors(elev_smooth, cell_size)
+    grid["RGB"] = colors
 
     return grid
 
@@ -225,10 +277,16 @@ def create_cross_section_wall(elevation, cell_size, vertical_exag=1.0,
     points = np.vstack([points_top, points_bot])
     wall = pv.PolyData(points, faces)
 
-    # Store elevation for coloring
-    elev_vals = np.concatenate([profile * vertical_exag,
-                                np.full(sny, base_depth * vertical_exag)])
-    wall["Elevation"] = elev_vals.astype(np.float32)
+    # Color wall with geological layers
+    n_pts = 2 * sny
+    wall_colors = np.zeros((n_pts, 3), dtype=np.float32)
+    for i in range(sny):
+        t = i / max(sny - 1, 1)  # 0=base, 1=surface
+        # Dark brown (deep) → tan (surface) with slight variation
+        base_color = [0.30 + 0.25 * t, 0.22 + 0.18 * t, 0.12 + 0.12 * t]
+        wall_colors[i] = base_color
+        wall_colors[sny + i] = base_color
+    wall["RGB"] = wall_colors
 
     return wall
 
@@ -375,21 +433,21 @@ class TerrainViewer:
         if self.wall_actor is not None:
             self.plotter.remove_actor(self.wall_actor)
 
-        # Create smooth mesh
+        # Create smooth mesh with realistic slope-based coloring
         mesh = create_terrain_mesh(
             elev, self.dataset["cell_size"], self.dataset["vertical_exag"]
         )
 
-        # Render with smooth shading + terrain colormap — looks like a real 3D model
+        # Render: RGB coloring with smooth shading for realistic appearance
         self.terrain_actor = self.plotter.add_mesh(
             mesh,
-            scalars="Elevation",
-            cmap="terrain",
+            scalars="RGB",
+            rgb=True,
             smooth_shading=True,
-            specular=0.2,
-            specular_power=20,
-            ambient=0.3,
-            diffuse=0.7,
+            specular=0.15,
+            specular_power=15,
+            ambient=0.25,
+            diffuse=0.75,
             show_scalar_bar=False,
             lighting=True,
         )
@@ -410,8 +468,8 @@ class TerrainViewer:
         )
         self.wall_actor = self.plotter.add_mesh(
             wall,
-            scalars="Elevation",
-            cmap="terrain",
+            scalars="RGB",
+            rgb=True,
             smooth_shading=True,
             show_edges=False,
             opacity=0.95,
