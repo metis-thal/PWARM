@@ -201,6 +201,104 @@ def compute_aabb_box(half_extents: np.ndarray, pos: np.ndarray,
     return corners_world.min(axis=0), corners_world.max(axis=0)
 
 
+def build_snapshot_from_physics_engine(engine: Any, camera: CameraState | None = None) -> SceneSnapshot:
+    """Build a SceneSnapshot from the new pymo.physics.WorldEngine (Genesis-inspired).
+
+    This reads from the new physics engine's State arrays (rigid_pos, rigid_quat, etc.)
+    and produces an immutable snapshot for the GLRenderer.
+    """
+    from pymo.physics.core.component import CollisionShapeComponent
+
+    state = engine.scene.double_buffer_read
+    if state is None:
+        state = engine.scene.double_buffer_write
+
+    instances: list[InstanceData] = []
+
+    if state.rigid_pos is not None and len(state.rigid_pos) > 0:
+        shape_info = getattr(engine, '_shape_info', {})
+        
+        for i in range(len(state.rigid_pos)):
+            pos = state.rigid_pos[i]
+            quat = state.rigid_quat[i] if state.rigid_quat is not None else np.array([1, 0, 0, 0], dtype=np.float32)
+
+            # Get shape info from WorldEngine
+            info = shape_info.get(i, {'shape': 'sphere', 'params': {}})
+            shape = info['shape']
+            params = info['params']
+
+            if shape == 'sphere':
+                mesh_type = MeshType.SPHERE
+                r = params.get('radius', 0.5)
+                scale = np.array([r, r, r], dtype=np.float32)
+            elif shape == 'box':
+                mesh_type = MeshType.BOX
+                hx, hy, hz = params.get('half_extents', [1, 1, 1])
+                scale = np.array([hx, hy, hz], dtype=np.float32)
+            elif shape == 'capsule':
+                mesh_type = MeshType.CYLINDER
+                r = params.get('radius', 0.5)
+                hh = params.get('half_height', 1.0)
+                scale = np.array([r, r, hh], dtype=np.float32)
+            else:
+                mesh_type = MeshType.SPHERE
+                scale = np.array([0.5, 0.5, 0.5], dtype=np.float32)
+
+            # Compute AABB
+            if mesh_type == MeshType.SPHERE:
+                aabb_min, aabb_max = compute_aabb_sphere(r, pos)
+            elif mesh_type == MeshType.BOX:
+                aabb_min, aabb_max = compute_aabb_box(scale, pos, quat)
+            else:
+                aabb_min = pos - scale
+                aabb_max = pos + scale
+
+            model = build_model_matrix(pos, quat, scale)
+
+            # Color based on velocity magnitude
+            vel = state.rigid_linvel[i] if state.rigid_linvel is not None else np.zeros(3)
+            speed = float(np.linalg.norm(vel))
+            # Blue (slow) -> Red (fast)
+            t = min(speed / 10.0, 1.0)
+            color = np.array([0.3 + 0.7*t, 0.4, 0.8 - 0.6*t], dtype=np.float32)
+
+            instances.append(InstanceData(
+                model_matrix=model,
+                mesh_type=mesh_type,
+                temperature=293.15,
+                base_color=color,
+                aabb_min=aabb_min,
+                aabb_max=aabb_max,
+            ))
+
+    # SPH fluid particles
+    fluid_pos = None
+    fluid_col = None
+    if state.sph_pos is not None and len(state.sph_pos) > 0:
+        fluid_pos = state.sph_pos.copy()
+        fluid_col = np.array([0.2, 0.5, 1.0], dtype=np.float32)  # water blue
+
+    # Camera
+    if camera is None:
+        camera = CameraState()
+
+    # Global quantities
+    gq = state.global_quantities
+
+    return SceneSnapshot(
+        t=state.t,
+        step=engine.frame,
+        instances=instances,
+        fluid_positions=fluid_pos,
+        fluid_color=fluid_col,
+        camera=camera,
+        kinetic_energy=gq.total_kinetic_energy,
+        thermal_energy=gq.total_thermal_energy,
+        total_energy=gq.total_energy,
+        total_mass=gq.total_mass,
+    )
+
+
 def build_snapshot_from_world(engine: Any, camera: CameraState | None = None) -> SceneSnapshot:
     """Build a SceneSnapshot from a WorldEngine (or World3D).
 

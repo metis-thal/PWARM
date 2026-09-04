@@ -53,9 +53,13 @@ class RigidSolver:
         gravity = self.scene.gravity if self.scene else np.array([0, 0, -9.81], dtype=np.float32)
         accel = gravity * self.options.gravity_scale
         
-        # Add accumulated forces
+        # Add accumulated forces (skip static bodies with mass=0)
         if state.rigid_force_accum is not None:
-            accel = accel + state.rigid_force_accum / state.rigid_mass[:, None]
+            safe_mass = np.where(state.rigid_mass > 0, state.rigid_mass, 1.0)[:, None]
+            accel = accel + state.rigid_force_accum / safe_mass
+            # Zero accel for static bodies
+            static_mask = (state.rigid_mass <= 0)[:, None]
+            accel = np.where(static_mask, 0.0, accel)
         
         # 2. Velocity-Verlet: v += a * dt
         new_state.rigid_linvel = state.rigid_linvel + accel * dt

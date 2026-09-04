@@ -200,6 +200,7 @@ class WorldEngine:
         transform = TransformComponent()
         transform.position = np.array(position, dtype=np.float32)
         entity.add(ComponentMask.TRANSFORM)
+        entity.user_data['transform'] = transform
         
         # Rigid body
         rb = RigidBodyComponent()
@@ -207,6 +208,7 @@ class WorldEngine:
         rb.inv_mass = 1.0 / mass if mass > 0 else 0.0
         rb.is_static = mass <= 0
         entity.add(ComponentMask.RIGID_BODY)
+        entity.user_data['rigid_body'] = rb
         
         # Collision shape
         shape_comp = CollisionShapeComponent()
@@ -221,9 +223,19 @@ class WorldEngine:
             shape_comp.radius = shape_params.get("radius", 0.5)
             shape_comp.half_height = shape_params.get("half_height", 1.0)
         entity.add(ComponentMask.COLLISION_SHAPE)
+        entity.user_data['collision_shape'] = shape_comp
         
         added_entity = self.scene.add_entity(entity)
         self._needs_state_rebuild = True
+        
+        # Store shape info for rendering
+        if not hasattr(self, '_shape_info'):
+            self._shape_info = {}
+        self._shape_info[added_entity.rigid_index] = {
+            'shape': shape,
+            'params': shape_params or {},
+        }
+        
         return added_entity
     
     def finalize_setup(self) -> None:

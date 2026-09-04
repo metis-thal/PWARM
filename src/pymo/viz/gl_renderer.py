@@ -27,7 +27,7 @@ from pymo.viz.snapshot import (
     MeshType,
     SceneSnapshot,
 )
-from pymo.geology import GeologySolver, get_material_properties_for_gpu
+from pymo.geology import GeologySolver
 
 
 # ---------------------------------------------------------------------------
@@ -826,9 +826,53 @@ class GLRenderer:
                 self._last_snapshot.camera.distance, 1.0, 200.0
             )
 
+    @property
+    def camera(self):
+        """Return the camera from the last snapshot, or a default."""
+        if self._last_snapshot is not None:
+            return self._last_snapshot.camera
+        return CameraState()
+
+    def init(self) -> None:
+        """Initialize GLFW window, OpenGL context, shaders, and meshes (non-blocking)."""
+        self._init_glfw()
+        self._init_shaders()
+        self._init_meshes()
+        self.running = True
+
+    def poll_key(self) -> int:
+        """Poll for a key press. Returns the key code, or -1 if none."""
+        glfw.poll_events()
+        # Check registered key callback events
+        if self._window is None:
+            return -1
+        # Return last key pressed (stored by _on_key)
+        return getattr(self, '_last_key', -1)
+
+    def render_frame(self) -> None:
+        """Render one frame: read snapshot from buffer, draw, swap."""
+        if self._window is None:
+            return
+        snap = self.buffer.read()
+        if snap is not None:
+            self._last_snapshot = snap
+            self._draw_frame(snap)
+            self._swap_buffers()
+
+    def set_title(self, title: str) -> None:
+        """Set the window title."""
+        if self._window is not None:
+            glfw.set_window_title(self._window, title)
+
+    def close(self) -> None:
+        """Clean up and close the window."""
+        self.running = False
+        self._cleanup()
+
     def _on_key(self, window, key, scancode, action, mods):
         if action != glfw.PRESS:
             return
+        self._last_key = key
         if key == glfw.KEY_ESCAPE:
             self.running = False
         elif key == glfw.KEY_R:

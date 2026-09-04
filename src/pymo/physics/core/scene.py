@@ -57,8 +57,11 @@ class Scene:
     stats: dict = field(default_factory=dict)
     
     def add_entity(self, entity: Entity) -> Entity:
-        """Add entity to scene."""
-        return self.entities.create(entity.name, entity.mask)
+        """Add entity to scene. Stores the entity directly (preserving user_data, indices, etc.)."""
+        self.entities._entities[entity.id] = entity
+        self.entities._add_to_archetype(entity)
+        self.entities._assign_indices(entity)
+        return entity
     
     def remove_entity(self, entity_id: EntityID) -> None:
         """Remove entity from scene."""
@@ -169,12 +172,26 @@ class Scene:
     
     def _populate_state_from_entities(self, state: State) -> None:
         """Copy entity component data into state arrays."""
+        from .component import TransformComponent, RigidBodyComponent, CollisionShapeComponent
+        
         for entity in self.entities:
             if entity.has(ComponentMask.RIGID_BODY) and entity.rigid_index is not None:
                 i = entity.rigid_index
-                # TransformComponent data would be copied here
-                pass
-            # ... similar for other components
+                
+                # Get components from user_data (stored during create_rigid_body)
+                transform = entity.user_data.get('transform')
+                rb = entity.user_data.get('rigid_body')
+                shape = entity.user_data.get('collision_shape')
+                
+                if transform is not None:
+                    state.rigid_pos[i] = transform.position
+                    state.rigid_quat[i] = transform.rotation
+                
+                if rb is not None:
+                    state.rigid_mass[i] = rb.mass
+                    state.rigid_inv_mass[i] = rb.inv_mass
+                    state.rigid_inertia_local[i] = rb.inertia_local
+                    state.rigid_inv_inertia_local[i] = rb.inv_inertia_local
     
     def _checkpoint(self) -> None:
         """Save checkpoint for reproducibility."""
