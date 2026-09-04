@@ -8,16 +8,29 @@ A self-evolving virtual physics world. All phenomena (rigid body, fluid, thermal
 
 ```
 src/pymo/
-├── kernel/   # Math/physics core: ODE/PDE solvers, Verlet integration, conservation (GROUND TRUTH)
-│             # 数学/物理核心：ODE/PDE求解器、Verlet积分、守恒定律（真值层）
-├── geology/  # Geology system: stratigraphy, thermal conduction, erosion, tectonics
-│             # 地质系统：地层学、热传导、侵蚀、构造运动
-├── rules/    # Multi-discipline: mechanics, thermodynamics, fluids, materials, chemistry
-│             # 多学科规则：力学、热力学、流体、材料、化学
-├── ai/       # AI reasoning/evolution: observer, hypothesis, verification, experimentation
-│             # AI推理/演化：观察器、假设、验证、实验
-└── viz/      # Visualization/observation: OpenGL GPU instancing, PBR shaders, frustum culling
-              # 可视化/观察：OpenGL GPU实例化、PBR着色器、视锥体剔除
+├── kernel/     # Legacy 2D/3D physics kernels (deprecated, kept for compatibility)
+│               # 旧版 2D/3D 物理内核（已弃用，保留兼容性）
+├── geology/    # Geology system: stratigraphy, thermal conduction, erosion, tectonics
+│               # 地质系统：地层学、热传导、侵蚀、构造运动
+├── rules/      # Multi-discipline: mechanics, thermodynamics, fluids, materials, chemistry
+│               # 多学科规则：力学、热力学、流体、材料、化学
+├── ai/         # AI reasoning/evolution: observer, hypothesis, verification, experimentation
+│               # AI推理/演化：观察器、假设、验证、实验
+├── physics/    # NEW: Unified multi-physics engine (Genesis-inspired)
+│   ├── core/   # Scene, State, Entity, Component (single source of truth)
+│   │           # 场景、状态、实体、组件（唯一真值源）
+│   ├── solvers/ # Rigid, SPH, FEM, MPM, PBD, Thermal, Chemistry, Geology
+│   │           # 刚体、SPH、FEM、MPM、PBD、热力学、化学、地质
+│   ├── coupling/ # Explicit multi-physics coupler (rigid↔SPH, thermal↔all, etc.)
+│   │           # 显式多物理耦合器
+│   ├── collision/ # Unified collision (SAP + GJK/EPA + CCD)
+│   │           # 统一碰撞检测
+│   └── integrator/ # TimeStepper (sub-steps + coupling iterations)
+│               # 时间步进器
+├── interface/  # Asset parsers (URDF/MJCF/GLTF), GUI, Sensors, Parallel envs
+│               # 资产解析、GUI、传感器、并行环境
+└── viz/        # Visualization: OpenGL GPU instancing, PBR, ray-tracing
+              # 可视化：OpenGL GPU实例化、PBR、光线追踪
 ```
 
 ## Core Rules / 核心规则
@@ -83,26 +96,30 @@ world.step(600)
 print(f"Height: {world.bodies[1].pos[2]:.2f} m")
 ```
 
-### AI Law Discovery / AI定律发现
+### AI Law Discovery (NEW: Works with pymo.physics) / AI定律发现
 
 ```python
-from pymo.ai.observer import WorldObserver
-from pymo.ai.closed_loop import ClosedLoopAI
+from pymo.physics import WorldEngine, WorldEngineConfig
+from pymo.ai import LawDiscovery, ClosedLoopAI
+from pymo.physics import create_free_fall_experiment
 
-# Create world and observe / 创建世界并观察
-from pymo.kernel.bodies import circle_body
-from pymo.kernel.world import World
-import numpy as np
+# Create physics engine and observe
+config = WorldEngineConfig(dt=1/60, substeps=1, rigid={'enabled': True})
+engine = WorldEngine(config)
 
-w = World(gravity=np.array([0.0, -9.81]), dt=0.01)
-w.add(circle_body([0.0, 10.0], 0.5, mass=1.0))
-dataset = WorldObserver(w, sample_every=1).observe(300)
+dataset = create_free_fall_experiment(engine, height=10.0, mass=1.0, n_steps=100)
 
 # AI discovers y(t) = f(t) / AI发现y(t) = f(t)
+ld = LawDiscovery()
+law = ld.discover_from_observation(dataset.time(), dataset.get('rigid0.pos.z'))
+print(f"Discovered: {law.expression}")  # e.g. "-4.905*t^2"
+print(f"R²: {law.r2:.6f}")  # ≈ 1.0
+
+# Closed-loop verification
 ai = ClosedLoopAI()
-results = ai.run(dataset, quantities=["body0.pos.y"])
-print(results[0].law.expression)  # e.g. "10.0 - 4.905*t^2"
-print(f"Error: {results[0].relative_error:.4f}")  # ≈ 0.0000
+results = ai.run(dataset, quantities=['rigid0.pos.z'])
+print(results[0].law.expression)
+print(f"Test error: {results[0].relative_error:.6f}")  # ≈ 0.0000
 ```
 
 ### SPH Fluid / SPH流体
@@ -115,28 +132,46 @@ system.step(dt=0.01)  # one SPH step / 一个SPH步长
 print(f"Density range: {system.min_density_ratio():.2f} - {system.max_density_ratio():.2f}")
 ```
 
-### WorldEngine (Unified Orchestration) / WorldEngine 统一编排
+### WorldEngine (NEW: Unified Multi-Physics Engine) / WorldEngine 统一多物理引擎
 
 ```python
-from pymo.kernel.world_engine import WorldEngine, WorldEngineConfig
+from pymo.physics import WorldEngine, WorldEngineConfig
 
 # Configure all subsystems
 config = WorldEngineConfig(
-    enable_physics3d=True,
-    enable_sph=True,
-    enable_chemistry=True,
-    enable_ecology=True,
-    enable_geology=True,       # NEW: geology pipeline
+    dt=1/60,
+    substeps=1,
+    gravity=(0.0, 0.0, -9.81),
+    rigid={'enabled': True},
+    sph={'enabled': False},
+    fem={'enabled': False},
+    mpm={'enabled': False},
+    pbd={'enabled': False},
+    thermal={'enabled': False},
+    chemistry={'enabled': False},
+    geology={'enabled': False},
+    enable_ai=True,
 )
 engine = WorldEngine(config)
 
-# Run simulation — all subsystems coupled automatically
-for _ in range(300):
-    engine.tick()
+# Create entities
+engine.create_rigid_body((0, 0, 5), mass=1.0, shape='sphere', shape_params={'radius': 0.5})
+engine.finalize_setup()
 
-# Access geology state
-geo = engine.geology_solver
-print(f"Surface temperature: {geo.grid.temperature[0,0,-1]:.1f} K")
+# Run simulation — all solvers coupled via explicit coupler
+for _ in range(300):
+    state = engine.tick()
+    print(f"t={state.t:.3f}, pos={state.rigid_pos}")
+
+# Checkpoint for reproducibility
+engine.checkpoint("checkpoint.pt")
+engine.restore("checkpoint.pt")
+```
+
+### Legacy WorldEngine (deprecated)
+```python
+from pymo.kernel.world_engine import WorldEngine as LegacyWorldEngine
+# ... old API still works but deprecated
 ```
 
 ### OpenGL GPU-Instanced Rendering / OpenGL GPU实例化渲染
@@ -173,20 +208,27 @@ solver.step(dt_years=1000.0)
 props = get_material_properties_for_gpu()  # → (rock_ids, colors, emissivities)
 ```
 
-## Module Reference / 模块参考
+### Module Reference / 模块参考
 
 | Module / 模块 | Description / 说明 |
 |--------------|-------------------|
-| `kernel.bodies` | 2D rigid bodies: circle, polygon / 2D刚体：圆、多边形 |
-| `kernel.bodies3d` | 3D rigid bodies: sphere, box, cylinder, convex hull / 3D刚体 |
-| `kernel.collision` | 2D SAT collision detection / 2D SAT碰撞检测 |
-| `kernel.collision3d` | 3D GJK/EPA collision detection / 3D GJK/EPA碰撞检测 |
-| `kernel.solver` | 2D impulse-based contact solver / 2D基于冲量的接触求解器 |
-| `kernel.world` | 2D physics world / 2D物理世界 |
-| `kernel.world3d` | 3D physics world / 3D物理世界 |
-| `kernel.world_engine` | Unified orchestration: physics + SPH + chemistry + ecology + geology / 统一编排 |
+| `kernel.bodies` | 2D rigid bodies: circle, polygon / 2D刚体：圆、多边形 (legacy) |
+| `kernel.bodies3d` | 3D rigid bodies: sphere, box, cylinder, convex hull / 3D刚体 (legacy) |
+| `kernel.collision` | 2D SAT collision detection / 2D SAT碰撞检测 (legacy) |
+| `kernel.collision3d` | 3D GJK/EPA collision detection / 3D GJK/EPA碰撞检测 (legacy) |
+| `kernel.solver` | 2D impulse-based contact solver / 2D基于冲量的接触求解器 (legacy) |
+| `kernel.world` | 2D physics world / 2D物理世界 (legacy) |
+| `kernel.world3d` | 3D physics world / 3D物理世界 (legacy) |
+| `kernel.world_engine` | Legacy unified orchestration (deprecated) / 旧版统一编排 |
 | `kernel.math3d` | Quaternion math, GJK support / 四元数数学、GJK支撑 |
 | `kernel.integrators` | Velocity-Verlet integrator (Numba JIT) / 速度Verlet积分器 |
+| `physics.core` | **NEW**: Scene, State, Entity, Component / 场景、状态、实体、组件 |
+| `physics.solvers` | **NEW**: Rigid, SPH, FEM, MPM, PBD, Thermal, Chemistry, Geology |
+| `physics.coupling` | **NEW**: Explicit multi-physics coupler / 显式多物理耦合器 |
+| `physics.collision` | **NEW**: Unified SAP + GJK/EPA + CCD / 统一碰撞检测 |
+| `physics.integrator` | **NEW**: TimeStepper with sub-steps / 时间步进器 |
+| `physics.interface` | **NEW**: URDF/MJCF/GLTF parsers, GUI, Sensors, Parallel envs |
+| `physics.ai` | **NEW**: Observer, LawDiscovery, ClosedLoopAI / 观察器、定律发现、闭环AI |
 | `geology.rock_materials` | Rock material definitions (granite, basalt, sandstone, etc.) / 岩石材料库 |
 | `geology.geology_grid` | 3D voxel grid with flat-array storage / 3D体素网格 |
 | `geology.geology_solver` | Geology process orchestrator / 地质过程编排器 |
@@ -195,9 +237,10 @@ props = get_material_properties_for_gpu()  # → (rock_ids, colors, emissivities
 | `rules.thermal` | Fourier heat conduction / 傅里叶热传导 |
 | `rules.fluid` | SPH fluid solver / SPH流体求解器 |
 | `rules.fracture` | Brittle fracture mechanics / 脆性断裂力学 |
-| `ai.observer` | World state observer / 世界状态观察器 |
+| `ai.observer` | World state observer (legacy) / 世界状态观察器 |
 | `ai.law_discovery` | Symbolic regression / 符号回归 |
 | `ai.closed_loop` | Closed-loop AI reasoning / 闭环AI推理 |
+| `ai.experiment` | Autonomous experimentation / 自主实验 |
 | `viz.gl_renderer` | OpenGL GPU-instanced renderer (PBR + frustum cull) / OpenGL GPU实例化渲染器 |
 | `viz.snapshot` | Double-buffered immutable scene snapshots / 双缓冲不可变场景快照 |
 | `viz.viewer` | 2D PyVista renderer / 2D PyVista渲染器 |

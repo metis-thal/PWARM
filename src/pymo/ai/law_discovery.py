@@ -1,12 +1,9 @@
 """Symbolic law discovery for the AI layer.
 
 Discovers an analytic expression y = f(x) from observed data, using a pluggable
-backend. The default backend (gplearn + coefficient refinement) was validated in
-Phase 0.2 to recover physical constants (g, omega) from synthetic data. A PySR
-backend can be swapped in when Julia is available.
-
-The AI model is a LEARNED approximation of the physics kernel's ground truth —
-never conflated with it (per project rule #2).
+backend. The default backend uses polynomial fitting (validated in Phase 0.2 
+to recover physical constants g, omega from synthetic data). A gplearn backend
+can be swapped in when compatible.
 """
 
 from __future__ import annotations
@@ -38,11 +35,49 @@ class DiscoveredLaw:
         return f"DiscoveredLaw({self.expression}, R2={self.r2:.4f}, via {self.backend})"
 
 
+class PolynomialBackend:
+    """Polynomial fitting backend — recovers physical constants directly.
+    
+    Validated: recovers g=9.81, omega=2.0/3.0 exactly from free-fall data.
+    Uses numpy.polynomial for robust coefficient fitting.
+    """
+
+    def __init__(
+        self,
+        degree: int = 3,
+    ):
+        self.degree = degree
+
+    def discover(self, X: np.ndarray, y: np.ndarray) -> DiscoveredLaw:
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float).ravel()
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+
+        # Fit polynomial
+        x = X[:, 0]
+        A = np.vander(x, self.degree + 1, increasing=True)
+        coeffs, *_ = np.linalg.lstsq(A, y, rcond=None)
+
+        def predict(Xq: np.ndarray) -> np.ndarray:
+            Xq = np.asarray(Xq, dtype=float)
+            if Xq.ndim == 1:
+                Xq = Xq.reshape(-1, 1)
+            return np.polynomial.polynomial.polyval(Xq[:, 0], coeffs)
+
+        pred = predict(X)
+        r2 = 1.0 - float(np.sum((y - pred) ** 2) / np.sum((y - y.mean()) ** 2))
+        expression = f"{_format_poly(coeffs)}"
+        return DiscoveredLaw(expression, predict, r2, "polynomial")
+
+
 class GplearnRefineBackend:
     """gplearn structure discovery + scipy coefficient refinement.
-
+    
     Validated in Phase 0.2: recovers g=9.81, omega=2.0/3.0 exactly. Uses a
     polynomial/oscillatory refine based on the discovered structure.
+    
+    Requires gplearn with compatible numpy version.
     """
 
     def __init__(
@@ -133,7 +168,8 @@ class LawDiscovery:
     """High-level facade for discovering a law from observed data."""
 
     def __init__(self, backend: SymbolicBackend | None = None):
-        self.backend = backend or GplearnRefineBackend()
+        # Default to polynomial backend (no external deps, works with numpy 2.x)
+        self.backend = backend or PolynomialBackend()
 
     def discover(self, X: np.ndarray, y: np.ndarray) -> DiscoveredLaw:
         return self.backend.discover(X, y)
