@@ -156,9 +156,9 @@ def create_collision_experiment(engine: "WorldEngine",
     e2 = engine.create_rigid_body(pos2, mass=1.0, shape='sphere', shape_params={'radius': 0.5})
     engine.finalize_setup()
     
-    # Set initial velocities (need to access state directly)
-    state = engine.get_state()
-    if state and state.rigid_linvel is not None:
+    # Set initial velocities via the write buffer
+    state = engine.scene.double_buffer_write
+    if state is not None and state.rigid_linvel is not None:
         state.rigid_linvel[0] = np.array(vel1, dtype=np.float32)
         state.rigid_linvel[1] = np.array(vel2, dtype=np.float32)
     

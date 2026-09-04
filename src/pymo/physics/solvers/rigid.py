@@ -67,8 +67,10 @@ class RigidSolver:
         if state.rigid_torque_accum is not None and state.rigid_inv_inertia_local is not None:
             # Convert local inertia to world
             # For now, simple integration
-            new_state.rigid_angvel = state.rigid_angvel + \
-                (state.rigid_inv_inertia_local @ state.rigid_torque_accum.T).T * dt
+            # (N,3,3) @ (N,3,1) -> (N,3,1) -> squeeze -> (N,3)
+            torque_col = state.rigid_torque_accum[:, :, np.newaxis]
+            ang_accel = (state.rigid_inv_inertia_local @ torque_col).squeeze(axis=2)
+            new_state.rigid_angvel = state.rigid_angvel + ang_accel * dt
         
         # 4. Orientation update (quaternion)
         if state.rigid_angvel is not None:
