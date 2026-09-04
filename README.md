@@ -191,6 +191,40 @@ while renderer.running:
     renderer.render_frame()
 ```
 
+### 3D Physics Visualization / 3D物理可视化 (NEW)
+
+```python
+from pymo.physics import WorldEngine, WorldEngineConfig
+from pymo.viz.snapshot import build_snapshot_from_physics_engine, DoubleBuffer
+from pymo.viz.gl_renderer import GLRenderer, RendererConfig
+
+# Create engine
+config = WorldEngineConfig(dt=1/60, substeps=1, gravity=(0,0,-9.81), rigid={'enabled': True})
+engine = WorldEngine(config)
+engine.create_rigid_body((0, 0, 5), mass=1.0, shape='sphere', shape_params={'radius': 0.5})
+engine.create_rigid_body((0, 0, -0.5), mass=0.0, shape='box', shape_params={'half_extents': [20, 20, 0.5]})
+engine.finalize_setup()
+
+# Connect to renderer
+buffer = DoubleBuffer()
+renderer = GLRenderer(buffer, RendererConfig(window_size=(1280, 720)))
+renderer.init()
+
+# Render loop — simulation drives snapshots, renderer reads them
+while renderer.running:
+    engine.tick()
+    snapshot = build_snapshot_from_physics_engine(engine, renderer.camera)
+    buffer.write(snapshot)
+    renderer.render_frame()
+    key = renderer.poll_key()
+    if key == ord('Q'):
+        break
+
+renderer.close()
+```
+
+Or run the interactive demo directly: `python scripts/demo_3d_physics.py`
+
 ### Geology Module / 地质模块
 
 ```python
@@ -382,6 +416,7 @@ dist/PWARM_PhysicsEngine.exe
 |-----|------|-------------------|
 | `PWARM_PhysicsEngine.exe` | **53 MB** | Console demo: WorldEngine + AI law discovery + collision + conservation |
 | `PWARM_TerrainViewer.exe` | **209 MB** | 3D terrain viewer with PyVista/VTK |
+| `PWARM_3DPhysics.exe` | — | **NEW**: Interactive 3D physics visualization (OpenGL GPU instancing) |
 
 ## Recent Changes / 近期变更
 
@@ -402,6 +437,12 @@ dist/PWARM_PhysicsEngine.exe
   - ClosedLoopAI: observe→discover→predict→compare — test error 4.35e-7 (PASS)
   - AutonomousExperimenter: ParameterSpace, ExperimentRunner, hypothesis evaluation
 - **Interface** (`pymo.interface`): URDF/MJCF/GLTF parsers, GUI, Sensors, Parallel environments
+- **3D Visualization Integration** (NEW):
+  - `build_snapshot_from_physics_engine()`: bridges WorldEngine → GLRenderer via SceneSnapshot
+  - Scene.add_entity() now preserves entity user_data (was discarding on add)
+  - RigidSolver handles static bodies (mass=0) without NaN division
+  - GLRenderer public API: `init()`, `render_frame()`, `poll_key()`, `set_title()`, `close()`, `camera`
+  - Interactive demo: `scripts/demo_3d_physics.py` — orbit camera, pause, reset, add bodies
 - **Bugfixes**: rigid.py angular velocity broadcast error, ai.py collision experiment API
 - **EXEs**: `PWARM_PhysicsEngine.exe` (53MB), `PWARM_TerrainViewer.exe` (209MB rebuilt)
 
