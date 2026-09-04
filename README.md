@@ -226,9 +226,50 @@ pytest tests/viz/            # viz tests only / 仅渲染测试
 | P3: OpenGL rendering / OpenGL渲染 | Done / 完成 | 190 pass |
 | P4.1: Ray parallel / Ray并行 | Done / 完成 | 4 pass |
 | P5: Geology module / 地质模块 | Phase 1 / 第一阶段 | 7 pass (4+3 skip) |
-| **Total** | | **190+ pass** |
+| P6: Terrain viewer / 地形可视化器 | Done / 完成 | 4 pass (1 real data + 1 simulation + 1 viewer + 1 exe) |
+| **Total** | | **194+ pass** |
+
+### Terrain Evolution Viewer / 地形演化可视化器
+
+Interactive 3D terrain viewer with real-world heightmaps and geological simulation.
+
+```bash
+# Run from source / 从源码运行
+python scripts/terrain_viewer.py --dataset everest
+
+# Or use prebuilt EXE / 或使用预编译可执行文件
+dist/PWARM_TerrainViewer.exe --dataset everest
+```
+
+| Key / 按键 | Action / 动作 |
+|-----------|--------------|
+| ← → | Navigate snapshots / 浏览时间步快照 |
+| ↑ ↓ | Switch dataset (Everest, Grand Canyon, Mt. Fuji, Zhangjiajie) |
+| M | Toggle realistic ↔ heatmap coloring / 切换着色模式 |
+| T | Toggle professional ↔ layperson UI / 切换专业/科普界面 |
+| S | Toggle cross-section / 切换剖面视图 |
+| R | Toggle rain / 开关降雨 |
+| W | Toggle snow / 开关降雪 |
+| V | Toggle rivers / 开关河流 |
+| A | Auto-play simulation / 自动播放 |
+| Q | Quit / 退出 |
+
+Features:
+- **4 real-world datasets**: SRTM heightmaps (Everest, Grand Canyon, Mt. Fuji, Zhangjiajie) at 512×512
+- **1M-year simulation**: Stream Power Law erosion + tectonic uplift on Everest, generating 17 time-step snapshots (t0 → t1M)
+- **Slope-based terrain coloring**: Vegetation zones, bare rock on steep slopes, snow caps, natural noise
+- **River extraction**: D8 flow accumulation algorithm computes drainage areas and renders river lines
+- **Weather effects**: Animated rain (2000 particles) and snow (1500 particles) via PyVista timer events
+- **Dual-mode UI**: Professional mode shows quantitative data (elevation, temperature, slope); layperson mode shows natural language descriptions
 
 ## Recent Changes / 近期变更
+
+### v0.5 — Terrain Evolution Viewer / 地形演化可视化器
+
+- **Real-world terrain data** (`data/terrain/`): 4 SRTM heightmaps downloaded and processed
+- **Everest simulation** (`scripts/simulate_everest.py`): 1M-year geological simulation (tectonics + erosion)
+- **3D viewer** (`scripts/terrain_viewer.py`): Interactive PyVista viewer with weather, rivers, dual-mode
+- **Standalone EXE** (`dist/PWARM_TerrainViewer.exe`): PyInstaller-built, no dependencies required
 
 ### v0.4 — Geology Module + OpenGL Rendering / 地质模块 + OpenGL渲染
 
