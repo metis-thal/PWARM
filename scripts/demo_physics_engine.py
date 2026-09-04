@@ -243,6 +243,10 @@ def main():
     else:
         print(f"\n  {failed} demo(s) failed.")
 
+    # Pause when double-clicked (not from terminal)
+    if sys.stdin.isatty():
+        input("\n  Press Enter to exit...")
+
     return 0 if failed == 0 else 1
 
 

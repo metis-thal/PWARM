@@ -826,8 +826,14 @@ def main():
     parser.add_argument("--dataset", "-d", default="everest",
                         choices=list(DATASETS.keys()))
     args = parser.parse_args()
-    viewer = TerrainViewer(args.dataset)
-    viewer.show()
+    try:
+        viewer = TerrainViewer(args.dataset)
+        viewer.show()
+    except Exception as e:
+        print(f"\n[ERROR] {e}")
+        import traceback
+        traceback.print_exc()
+        input("\nPress Enter to exit...")
 
 
 if __name__ == "__main__":
