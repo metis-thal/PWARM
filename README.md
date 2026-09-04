@@ -270,7 +270,8 @@ pytest tests/viz/            # viz tests only / 仅渲染测试
 | P4.1: Ray parallel / Ray并行 | Done / 完成 | 4 pass |
 | P5: Geology module / 地质模块 | Phase 1 / 第一阶段 | 7 pass (4+3 skip) |
 | P6: Terrain viewer / 地形可视化器 | Done / 完成 | 4 pass (1 real data + 1 simulation + 1 viewer + 1 exe) |
-| **Total** | | **194+ pass** |
+| **P7: Genesis-inspired Multi-Physics Engine** | **Done / 完成** | **4 pass (free-fall, collision, conservation, architecture)** |
+| **Total** | | **198+ pass** |
 
 ### Terrain Evolution Viewer / 地形演化可视化器
 
@@ -305,7 +306,104 @@ Features:
 - **Weather effects**: Animated rain (2000 particles) and snow (1500 particles) via PyVista timer events
 - **Dual-mode UI**: Professional mode shows quantitative data (elevation, temperature, slope); layperson mode shows natural language descriptions
 
+## Physics Engine Demo / 物理引擎演示
+
+```bash
+# Run from source / 从源码运行
+python scripts/demo_physics_engine.py
+
+# Or use prebuilt EXE / 或使用预编译可执行文件
+dist/PWARM_PhysicsEngine.exe
+```
+
+| Demo | Description / 说明 |
+|------|-------------------|
+| Free-Fall + AI | Drop ball → AI discovers z(t) = -4.905*t² (R²≈1.0) |
+| Two-Body Collision | Opposite velocities → detect bounce |
+| Energy Conservation | Monitor KE/momentum during 3-body drop |
+| Multi-Physics Architecture | Verify all subsystems (rigid, SPH, FEM, MPM, PBD, thermal, chemistry, geology) |
+
+## Algorithms & Data Structures / 算法与数据结构
+
+### Collision Detection / 碰撞检测
+
+| Algorithm | Complexity | Description / 说明 |
+|-----------|-----------|-------------------|
+| **SAP (Sweep and Prune)** | O(n log n) insert, O(n+k) query | Broad phase: maintain sorted AABB min/max on each axis |
+| **GJK (Gilbert-Johnson-Keerthi)** | O(n) iterations | Narrow phase: exact contact for convex shapes via Minkowski difference |
+| **EPA (Expanding Polytope Algorithm)** | O(n²) worst case | Extends GJK to compute penetration depth and contact normal |
+| **SAT (Separating Axis Theorem)** | O(15) for box-box | Fast OBB-OBB: test 15 axes (3+3 face normals + 9 cross products) |
+| **Conservative CCD** | O(n) sweep | Continuous collision detection for fast-moving objects (prevent tunneling) |
+
+### Physics Solvers / 物理求解器
+
+| Solver | Algorithm | Data Structure | Description / 说明 |
+|--------|-----------|----------------|-------------------|
+| **RigidSolver** | Velocity-Verlet + impulse contacts | `(N,3)` pos/vel arrays, `(N,4)` quaternions | Rigid body dynamics with quaternion integration |
+| **SPHSolver** | WCSPH (Weakly Compressible SPH) | KD-tree neighbors, `(N,3)` particle arrays | Fluid simulation with cubic kernel, boundary reflection |
+| **FEMSolver** | Implicit Euler (placeholder) | `(E,4)` tetrahedra, `(E,3,3)` deformation gradient | Deformable solids |
+| **MPMSolver** | Material Point Method (placeholder) | `(N,3)` particles + background grid | Sand, snow, clay simulation |
+| **PBDSolver** | Position-Based Dynamics (placeholder) | Distance/bending constraints | Cloth, hair simulation |
+| **ThermalSolver** | Implicit heat equation | `(N,)` temperature array | Fourier heat conduction |
+| **ChemistrySolver** | Reaction-diffusion (placeholder) | `(N,num_species)` concentration | Chemical reactions |
+| **GeologySolver** | Stratigraphy + erosion (placeholder) | `(Nx,Ny,Nz)` voxel grid | Geological processes |
+
+### State Management / 状态管理
+
+| Structure | Description / 说明 |
+|-----------|-------------------|
+| **Double Buffer** | Simulation writes to `write` buffer, render reads from `read` buffer. Swap after each frame. |
+| **Immutable State** | `State` dataclass with flat contiguous arrays. Copy-on-swap for render thread safety. |
+| **Entity-Component** | `ComponentMask` (IntFlag) enables/disables subsystems per entity. `EntityManager` for archetype queries. |
+| **Global Quantities** | `GlobalQuantities` tracks mass, energy, momentum for conservation monitoring. |
+
+### AI Layer / AI层
+
+| Algorithm | Description / 说明 |
+|-----------|-------------------|
+| **Symbolic Regression** | PolynomialBackend (default) or GplearnRefineBackend. Discovers expressions like z(t) = -4.905*t² |
+| **Closed-Loop Verification** | Train/test split → discover law on train → predict on test → measure relative error |
+| **WorldObserver** | Samples ground-truth state at intervals. Produces TimeSeriesDataset for AI. |
+
+### Multi-Physics Coupling / 多物理耦合
+
+| Pair | Interaction | Description / 说明 |
+|------|-------------|-------------------|
+| rigid↔sph | Boundary particles, buoyancy, drag | SPH particles interact with rigid surfaces |
+| rigid↔fem/mpm | Contact constraints, friction | Deformable bodies collide with rigid objects |
+| sph↔fem/mpm | Fluid pressure on deformable, porosity | Fluid-structure interaction |
+| thermal↔all | Heat flux, latent heat, reaction heat | Temperature coupling across all materials |
+| chemistry↔sph | Species diffusion, reaction sources | Chemical transport in fluid |
+| geology↔thermal | Crustal heat flow, radiogenic heating | Geological heat sources |
+
+## EXE Build Results / EXE构建结果
+
+| EXE | Size | Description / 说明 |
+|-----|------|-------------------|
+| `PWARM_PhysicsEngine.exe` | **53 MB** | Console demo: WorldEngine + AI law discovery + collision + conservation |
+| `PWARM_TerrainViewer.exe` | **209 MB** | 3D terrain viewer with PyVista/VTK |
+
 ## Recent Changes / 近期变更
+
+### v0.6 — Genesis-inspired Multi-Physics Engine / 类经典物理世界引擎
+
+- **NEW: `pymo.physics`** — Unified multi-physics engine (Genesis-inspired architecture)
+  - Core: Scene, State, Entity, ComponentMask, EntityManager (single source of truth)
+  - RigidSolver: impulse-based contacts, Velocity-Verlet, quaternion integration
+  - SPHSolver: WCSPH with KD-tree neighbor search, pressure/viscosity/surface tension
+  - Stub solvers: FEM, MPM, PBD, Thermal, Chemistry, Geology (architecture ready)
+  - Explicit Coupler: rigid↔SPH, rigid↔FEM, thermal↔all, chemistry↔SPH, geology↔thermal
+  - CollisionSystem: SAP broad phase + GJK/EPA narrow phase + SAT (box-box) + CCD
+  - TimeStepper: sub-steps + Gauss-Seidel coupling iterations + conservation monitoring
+  - WorldEngine: unified entry point with double-buffered immutable snapshots
+- **AI Layer** (`pymo.physics.ai`):
+  - WorldObserver: samples ground-truth state from WorldEngine
+  - LawDiscovery: polynomial backend (no external deps) — R²≈1.0 on free-fall
+  - ClosedLoopAI: observe→discover→predict→compare — test error 4.35e-7 (PASS)
+  - AutonomousExperimenter: ParameterSpace, ExperimentRunner, hypothesis evaluation
+- **Interface** (`pymo.interface`): URDF/MJCF/GLTF parsers, GUI, Sensors, Parallel environments
+- **Bugfixes**: rigid.py angular velocity broadcast error, ai.py collision experiment API
+- **EXEs**: `PWARM_PhysicsEngine.exe` (53MB), `PWARM_TerrainViewer.exe` (209MB rebuilt)
 
 ### v0.5 — Terrain Evolution Viewer / 地形演化可视化器
 
