@@ -7,9 +7,42 @@ Shared by all solvers via CollisionShapeComponent.
 
 from __future__ import annotations
 from dataclasses import dataclass
+from itertools import combinations as _itertools_combinations
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+
+def _closest_point_in_affine_space(pts: np.ndarray):
+    """Closest point to the origin within the convex hull of pts.
+
+    Args:
+        pts: (n, 3) array of simplex vertices.
+
+    Returns:
+        (point, valid): valid is False when the affine-hull closest point has
+        a negative barycentric weight (the true closest point then lies on a
+        lower-dimensional face, which the caller explores via subsets).
+    """
+    n = len(pts)
+    if n == 1:
+        return pts[0].copy(), True
+    # KKT system for  min |sum(lam_i * p_i)|^2  s.t.  sum(lam_i) = 1
+    G = pts @ pts.T
+    KKT = np.zeros((n + 1, n + 1))
+    KKT[:n, :n] = 2.0 * G
+    KKT[:n, n] = 1.0
+    KKT[n, :n] = 1.0
+    rhs = np.zeros(n + 1)
+    rhs[n] = 1.0
+    try:
+        sol, *_ = np.linalg.lstsq(KKT, rhs, rcond=None)
+    except np.linalg.LinAlgError:
+        return np.zeros(3), False
+    lam = sol[:n]
+    if np.any(lam < -1e-9):
+        return np.zeros(3), False
+    return pts.T @ lam, True
 
 if TYPE_CHECKING:
     from ..core.state import State
@@ -138,27 +171,29 @@ class SAPBroadPhase:
         self._dirty = False
     
     def query(self) -> list[tuple[int, int]]:
-        """Return list of potentially overlapping AABB index pairs."""
+        """Return list of potentially overlapping AABB index pairs.
+
+        A pair overlaps only if its intervals overlap on ALL three axes;
+        per-axis overlap sets are intersected.
+        """
         if self._dirty:
             self._rebuild()
-        
-        # Active intervals sweep
-        active = [set(), set(), set()]
-        pairs = set()
-        
+
+        axis_pairs: list[set[tuple[int, int]]] = []
         for axis in range(3):
+            overlaps: set[tuple[int, int]] = set()
+            active: set[int] = set()
             for value, index, is_min in self.axis_lists[axis]:
                 if is_min:
-                    # Check overlap with active intervals
-                    for other in active[axis]:
+                    for other in active:
                         if index != other:
-                            pair = tuple(sorted((index, other)))
-                            pairs.add(pair)
-                    active[axis].add(index)
+                            overlaps.add(tuple(sorted((index, other))))
+                    active.add(index)
                 else:
-                    active[axis].discard(index)
-        
-        return list(pairs)
+                    active.discard(index)
+            axis_pairs.append(overlaps)
+
+        return list(axis_pairs[0] & axis_pairs[1] & axis_pairs[2])
 
 
 class GJKNarrowPhase:
@@ -329,9 +364,242 @@ class GJKNarrowPhase:
                 abs(np.dot(R[:, 2], axis)) * half_extents[2])
     
     def _gjk_epa(self, a, ta, b, tb) -> Contact | None:
-        """General GJK + EPA for convex shapes. Placeholder."""
-        # Full implementation requires support mapping for each shape type
-        return None
+        """GJK (Gilbert-Johnson-Keerthi) + EPA for general convex shapes.
+
+        Works in the Minkowski difference C = A ⊖ B, whose support in
+        direction d is support_A(d) - support_B(-d). C contains the origin
+        iff the shapes overlap. EPA then finds the closest boundary point of
+        C to the origin; its direction is the contact normal (A->B) and its
+        magnitude the penetration depth (verified against the sphere-box
+        fast path convention).
+        """
+        simplex = self._gjk_simplex(a, ta, b, tb)
+        if simplex is None:
+            return None
+        return self._epa(a, ta, b, tb, simplex)
+
+    # -- support functions ---------------------------------------------------
+
+    def _support(self, shape: CollisionShapeComponent, transform: np.ndarray,
+                 d_world: np.ndarray) -> np.ndarray:
+        """World-space support point: farthest vertex of shape along d_world."""
+        R = transform[:3, :3]
+        center = transform[:3, 3]
+        d = R.T @ d_world
+        n = float(np.linalg.norm(d))
+        if n < 1e-12:
+            d = np.array([0.0, 0.0, 1.0])
+            n = 1.0
+        d_hat = d / n
+
+        st = shape.shape_type
+        if st == CollisionShapeComponent.ShapeType.SPHERE:
+            local = d_hat * shape.radius
+        elif st == CollisionShapeComponent.ShapeType.BOX:
+            local = np.sign(d_hat) * shape.half_extents
+        elif st == CollisionShapeComponent.ShapeType.CAPSULE:
+            # Segment along local Y: endpoints (0, ±half_height, 0), plus radius
+            axis = np.array([0.0, 1.0, 0.0])
+            endpoint = axis * shape.half_height if d_hat[1] >= 0 else -axis * shape.half_height
+            local = endpoint + d_hat * shape.radius
+        elif st == CollisionShapeComponent.ShapeType.CYLINDER:
+            # Rim circle in local XZ plane, axis along local Y
+            radial = np.array([d_hat[0], 0.0, d_hat[2]])
+            rl = float(np.linalg.norm(radial))
+            if rl > 1e-12:
+                radial /= rl
+            else:
+                radial = np.array([1.0, 0.0, 0.0])
+            local = radial * shape.radius + np.array([0.0, np.sign(d_hat[1]) * shape.half_height, 0.0])
+        elif st == CollisionShapeComponent.ShapeType.CONVEX_HULL:
+            verts = shape.vertices
+            if verts is None or len(verts) == 0:
+                local = np.zeros(3)
+            else:
+                local = verts[int(np.argmax(verts @ d_hat))]
+        else:
+            local = d_hat * 0.5  # conservative fallback
+
+        return center + R @ local
+
+    def _minkowski(self, a, ta, b, tb, d: np.ndarray) -> np.ndarray:
+        """Support of C = A ⊖ B in direction d."""
+        return self._support(a, ta, d) - self._support(b, tb, -d)
+
+    # -- GJK ------------------------------------------------------------------
+
+    def _closest_point_on_simplex(self, simplex: list[np.ndarray]) -> tuple[np.ndarray, list[int]]:
+        """Brute-force closest point of the simplex to the origin.
+
+        Evaluates every non-empty subset (<= 15 for a tetrahedron) and returns
+        the point with the smallest norm plus the subset indices that span it.
+        Robust and simple; only used for capsule/cylinder/convex pairs.
+        """
+        n = len(simplex)
+        best_point = simplex[0].copy()
+        best_subset = [0]
+        best_norm = float(np.linalg.norm(best_point))
+        for size in range(1, n + 1):
+            for subset in _itertools_combinations(range(n), size):
+                pts = np.array([simplex[i] for i in subset])
+                point, valid = _closest_point_in_affine_space(pts)
+                if valid is not None and valid:
+                    norm = float(np.linalg.norm(point))
+                    if norm < best_norm - 1e-12:
+                        best_norm = norm
+                        best_point = point
+                        best_subset = list(subset)
+        return best_point, best_subset
+
+    def _gjk_simplex(self, a, ta, b, tb) -> list[np.ndarray] | None:
+        """Run GJK. Returns a simplex (containing the origin) if the shapes
+        overlap, else None."""
+        d = ta[:3, 3] - tb[:3, 3]
+        if float(np.linalg.norm(d)) < 1e-8:
+            d = np.array([0.0, 0.0, 1.0])
+
+        simplex: list[np.ndarray] = [self._minkowski(a, ta, b, tb, d)]
+        d = -simplex[0]
+
+        for _ in range(32):
+            s = self._minkowski(a, ta, b, tb, d)
+            if float(np.dot(s, d)) < 0.0:
+                return None  # separating: support cannot reach the origin
+            simplex.append(s)
+
+            q, subset = self._closest_point_on_simplex(simplex)
+            if float(np.linalg.norm(q)) < 1e-9:
+                # Origin lies on/in the simplex: the shapes overlap. Build a
+                # full tetrahedron for EPA by expanding along candidate
+                # directions until fresh vertices are found (the support along
+                # the current direction may duplicate an existing vertex when
+                # the origin sits on a face/edge of the Minkowski difference).
+                candidates = [
+                    d,
+                    np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]),
+                    np.array([0.0, 0.0, 1.0]), np.array([1.0, 1.0, 0.0]),
+                    np.array([0.0, 1.0, 1.0]), np.array([1.0, 0.0, 1.0]),
+                ]
+                for n_dir in candidates:
+                    if len(simplex) >= 4:
+                        break
+                    nl = float(np.linalg.norm(n_dir))
+                    if nl < 1e-12:
+                        continue
+                    extra = self._minkowski(a, ta, b, tb, n_dir / nl)
+                    if all(float(np.linalg.norm(extra - p)) > 1e-6 for p in simplex):
+                        simplex.append(extra)
+                if len(simplex) < 4:
+                    return None  # degenerate (flat shapes) — treat as touching
+                return simplex
+
+            # Reduce to the closest feature and aim at the origin
+            simplex[:] = [simplex[i] for i in subset]
+            d = -q
+
+        return None  # iteration budget exhausted: treat as separated
+
+    # -- EPA ------------------------------------------------------------------
+
+    def _epa(self, a, ta, b, tb, simplex: list[np.ndarray]) -> Contact | None:
+        """Expanding Polytope Algorithm: minimum penetration vector of
+        C = A ⊖ B. Returns a Contact with normal (A->B) and depth."""
+        pts = [p.copy() for p in simplex]
+        if len(pts) < 4:
+            return None
+
+        # Faces as index triples; normals computed on the fly, oriented
+        # outward via the polytope centroid.
+        faces = [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]]
+
+        normal = np.zeros(3)
+        depth = 0.0
+        for _ in range(48):
+            centroid = np.mean(np.array(pts), axis=0)
+
+            best_dist = np.inf
+            best_face = None
+            best_normal = None
+            for f in faces:
+                v0, v1, v2 = pts[f[0]], pts[f[1]], pts[f[2]]
+                n = np.cross(v1 - v0, v2 - v0)
+                nl = float(np.linalg.norm(n))
+                if nl < 1e-12:
+                    continue
+                n_hat = n / nl
+                fc = (v0 + v1 + v2) / 3.0
+                if float(np.dot(n_hat, fc - centroid)) < 0:  # orient outward
+                    n_hat = -n_hat
+                dist = float(np.dot(n_hat, v0))  # origin inside => positive
+                if dist < best_dist:
+                    best_dist = dist
+                    best_face = f
+                    best_normal = n_hat
+
+            if best_face is None or not np.isfinite(best_dist):
+                return None
+
+            s = self._minkowski(a, ta, b, tb, best_normal)
+            expansion = float(np.dot(s, best_normal)) - best_dist
+            if expansion < 1e-4:
+                normal = best_normal
+                depth = max(best_dist, 0.0)
+                break
+
+            # Insert s: remove faces visible from s, bridge horizon edges.
+            # Each horizon edge (used by exactly one visible face) yields ONE
+            # new face — this keeps the polytope closed and growth linear.
+            pts.append(s)
+            si = len(pts) - 1
+            visible = []
+            edge_use: dict[tuple[int, int], int] = {}
+            for f in faces:
+                v0, v1, v2 = pts[f[0]], pts[f[1]], pts[f[2]]
+                n = np.cross(v1 - v0, v2 - v0)
+                nl = float(np.linalg.norm(n))
+                seen = False
+                if nl >= 1e-12:
+                    n_hat = n / nl
+                    fc = (v0 + v1 + v2) / 3.0
+                    if float(np.dot(n_hat, fc - centroid)) < 0:
+                        n_hat = -n_hat
+                    seen = float(np.dot(n_hat, s - v0)) > 1e-10
+                if seen:
+                    visible.append(f)
+                    for u, v in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
+                        key = (min(u, v), max(u, v))
+                        edge_use[key] = edge_use.get(key, 0) + 1
+            if not visible:
+                # Support point did not expand the polytope: converged
+                normal = best_normal
+                depth = max(best_dist, 0.0)
+                break
+            horizon = [e for e, c in edge_use.items() if c == 1]
+            for f in visible:
+                faces.remove(f)
+            if not horizon or len(faces) + len(horizon) > 512:
+                # Degenerate or overgrown polytope: return current best
+                normal = best_normal
+                depth = max(best_dist, 0.0)
+                break
+            for u, v in horizon:
+                faces.append([u, v, si])
+        else:
+            # Budget exhausted: the best-so-far face is monotonic-improving
+            # and accurate enough for impulse resolution.
+            normal = best_normal
+            depth = max(best_dist, 0.0)
+
+        # Contact point: project A's center onto the contact plane (adequate
+        # for impulse resolution; the solver only uses normal/depth today).
+        point_a = ta[:3, 3]
+        point = point_a - normal * depth
+        return Contact(
+            entity_a=a.entity_id, entity_b=b.entity_id,
+            point=point, normal=normal, depth=depth,
+            friction=min(a.friction, b.friction),
+            restitution=min(a.restitution, b.restitution),
+        )
 
 
 class ConservativeCCD:
@@ -444,9 +712,34 @@ class CollisionSystem:
                 half_extents_world = np.abs(R) @ shape.half_extents
             else:
                 half_extents_world = shape.half_extents
-            return AABB(pos - half_extents_world, pos + half_extents_world, 
+            return AABB(pos - half_extents_world, pos + half_extents_world,
                        shape.entity_id, "rigid")
-        
+
+        elif shape.shape_type in (CollisionShapeComponent.ShapeType.CAPSULE,
+                                  CollisionShapeComponent.ShapeType.CYLINDER):
+            # Axis along local Y: extent is half_height + radius on Y,
+            # radius on X/Z. Conservative world AABB via rotation matrix.
+            r = shape.radius
+            hh = shape.half_height + (r if shape.shape_type == CollisionShapeComponent.ShapeType.CAPSULE else 0.0)
+            local_half = np.array([r, hh, r], dtype=np.float32)
+            if quat is not None:
+                R = self._quat_to_rot(quat)
+                half = np.abs(R) @ local_half
+            else:
+                half = local_half
+            return AABB(pos - half, pos + half, shape.entity_id, "rigid")
+
+        elif shape.shape_type == CollisionShapeComponent.ShapeType.CONVEX_HULL:
+            if shape.vertices is not None and len(shape.vertices) > 0:
+                if quat is not None:
+                    R = self._quat_to_rot(quat)
+                    world_verts = shape.vertices @ R.T
+                else:
+                    world_verts = shape.vertices
+                lo = (pos + world_verts).min(axis=0)
+                hi = (pos + world_verts).max(axis=0)
+                return AABB(lo, hi, shape.entity_id, "rigid")
+
         # Default: large box
         return AABB(pos - 10, pos + 10, shape.entity_id, "rigid")
     

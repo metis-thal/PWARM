@@ -157,10 +157,23 @@ class RigidSolver:
                 j = -(1 + contact.restitution) * vn / inv_mass_sum
                 j = max(j, 0)
 
-                # Apply impulse
+                # Apply normal impulse
                 impulse = contact.normal * j
                 state.rigid_linvel[idx_a] -= impulse * inv_mass_a
                 state.rigid_linvel[idx_b] += impulse * inv_mass_b
+
+                # Coulomb friction: tangential impulse clamped to mu * j_n.
+                # Opposes the tangential slip of B relative to A.
+                if j > 0 and contact.friction > 0:
+                    tangential = rel_vel - vn * contact.normal
+                    t_len = float(np.linalg.norm(tangential))
+                    if t_len > 1e-6:
+                        t_hat = tangential / t_len
+                        jt_needed = t_len / inv_mass_sum
+                        jt = min(jt_needed, contact.friction * j)
+                        fric_impulse = -t_hat * jt
+                        state.rigid_linvel[idx_a] -= fric_impulse * inv_mass_a
+                        state.rigid_linvel[idx_b] += fric_impulse * inv_mass_b
 
                 # Positional correction: push bodies out of penetration
                 # (prevents gradual sinking under gravity). Use partial
