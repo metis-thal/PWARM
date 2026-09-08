@@ -157,6 +157,7 @@ class WorldEngine:
                      'geology_thermal', 'geology_rigid']
         }))
         self.scene.collision_system = CollisionSystem()
+        self.scene.collision_system.scene = self.scene
         self.scene.time_stepper = TimeStepper(self.scene, TimeStepperOptions(
             dt=config.dt,
             substeps=config.substeps,
@@ -212,6 +213,8 @@ class WorldEngine:
         
         # Collision shape
         shape_comp = CollisionShapeComponent()
+        shape_comp.friction = shape_params.get("friction", 0.5) if shape_params else 0.5
+        shape_comp.restitution = shape_params.get("restitution", 0.0) if shape_params else 0.0
         if shape == "sphere":
             shape_comp.shape_type = CollisionShapeComponent.ShapeType.SPHERE
             shape_comp.radius = shape_params.get("radius", 0.5) if shape_params else 0.5
@@ -224,6 +227,7 @@ class WorldEngine:
             shape_comp.half_height = shape_params.get("half_height", 1.0)
         entity.add(ComponentMask.COLLISION_SHAPE)
         entity.user_data['collision_shape'] = shape_comp
+        shape_comp.entity_id = entity.id
         
         added_entity = self.scene.add_entity(entity)
         self._needs_state_rebuild = True

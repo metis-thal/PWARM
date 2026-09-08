@@ -229,6 +229,8 @@ class CollisionShapeComponent(Component):
         SDF = 6  # Signed Distance Field
     
     shape_type: ShapeType = ShapeType.SPHERE
+    # Owning entity (set at creation; used by collision system for Contact/AABB identity)
+    entity_id: EntityID | None = None
     # Sphere
     radius: float = 0.5
     # Box

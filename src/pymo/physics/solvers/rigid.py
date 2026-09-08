@@ -150,17 +150,28 @@ class RigidSolver:
                 inv_mass_a = state.rigid_inv_mass[idx_a]
                 inv_mass_b = state.rigid_inv_mass[idx_b]
                 inv_mass_sum = inv_mass_a + inv_mass_b
-                
+
                 if inv_mass_sum == 0:
                     continue
-                
+
                 j = -(1 + contact.restitution) * vn / inv_mass_sum
                 j = max(j, 0)
-                
+
                 # Apply impulse
                 impulse = contact.normal * j
                 state.rigid_linvel[idx_a] -= impulse * inv_mass_a
                 state.rigid_linvel[idx_b] += impulse * inv_mass_b
+
+                # Positional correction: push bodies out of penetration
+                # (prevents gradual sinking under gravity). Use partial
+                # correction with slop to reduce jitter and energy injection.
+                slop = 0.005
+                beta = 0.8
+                corr_mag = beta * max(contact.depth - slop, 0.0)
+                if corr_mag > 0:
+                    corr = contact.normal * corr_mag
+                    state.rigid_pos[idx_a] -= corr * (inv_mass_a / inv_mass_sum)
+                    state.rigid_pos[idx_b] += corr * (inv_mass_b / inv_mass_sum)
         
         return state
     

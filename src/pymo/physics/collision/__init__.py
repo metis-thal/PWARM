@@ -16,6 +16,10 @@ if TYPE_CHECKING:
     from ..core.entity import EntityID, ComponentMask
     from ..core.component import CollisionShapeComponent
 
+# Runtime import needed for shape type dispatch (no circular dependency:
+# core.component does not import collision)
+from ..core.component import CollisionShapeComponent
+
 
 @dataclass(slots=True)
 class Contact:
@@ -193,10 +197,14 @@ class GJKNarrowPhase:
         if (type_a == CollisionShapeComponent.ShapeType.SPHERE and 
             type_b == CollisionShapeComponent.ShapeType.BOX):
             return self._sphere_box(shape_a, transform_a, shape_b, transform_b)
-        if (type_a == CollisionShapeComponent.ShapeType.BOX and 
+        if (type_a == CollisionShapeComponent.ShapeType.BOX and
             type_b == CollisionShapeComponent.ShapeType.SPHERE):
             contact = self._sphere_box(shape_b, transform_b, shape_a, transform_a)
             if contact:
+                # Inner contact has A=sphere, B=box with normal sphere->box.
+                # Outer convention wants A=box, B=sphere: swap identities and
+                # flip the normal so it points from A (box) to B (sphere).
+                contact.entity_a, contact.entity_b = contact.entity_b, contact.entity_a
                 contact.normal = -contact.normal
             return contact
         
@@ -246,9 +254,11 @@ class GJKNarrowPhase:
                 normal_local = diff / dist
             else:
                 normal_local = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-            
-            # Transform normal to world
-            normal = tb[:3, :3] @ normal_local
+
+            # Contact convention: normal points from A (sphere) to B (box).
+            # diff points from the box surface toward the sphere center (B->A),
+            # so negate to get A->B.
+            normal = -(tb[:3, :3] @ normal_local)
             point_world = tb[:3, 3] + tb[:3, :3] @ closest
             depth = sphere.radius - dist
             
@@ -357,6 +367,8 @@ class CollisionSystem:
         self.narrow_phase = GJKNarrowPhase()
         self.ccd = ConservativeCCD()
         self._aabb_cache: dict[EntityID, AABB] = {}
+        # Scene reference for entity/shape lookups (set by WorldEngine)
+        self.scene = None
     
     def detect(self, state: State) -> ContactList:
         """Detect all contacts for current state."""
@@ -369,8 +381,8 @@ class CollisionSystem:
         # 3. Narrow phase: exact collision test
         contacts = []
         for idx_a, idx_b in pairs:
-            aabb_a = self.aabbs[idx_a]
-            aabb_b = self.aabbs[idx_b]
+            aabb_a = self.broad_phase.aabbs[idx_a]
+            aabb_b = self.broad_phase.aabbs[idx_b]
             
             if aabb_a is None or aabb_b is None:
                 continue
@@ -400,12 +412,15 @@ class CollisionSystem:
         """Update AABBs for all collision entities."""
         # Rigid bodies
         if state.rigid_pos is not None:
+            # Reverse lookup: rigid array index -> EntityID
+            index_to_entity = {v: k for k, v in state.entity_to_rigid.items()}
             for i in range(len(state.rigid_pos)):
-                # Get entity_id from metadata
-                entity_id = self._get_entity_id_from_rigid_index(i)
+                entity_id = index_to_entity.get(i)
+                if entity_id is None:
+                    continue
                 shape = self._get_shape(state, entity_id)
                 if shape:
-                    aabb = self._compute_aabb(shape, state.rigid_pos[i], 
+                    aabb = self._compute_aabb(shape, state.rigid_pos[i],
                                              state.rigid_quat[i] if state.rigid_quat is not None else None)
                     self.broad_phase.update(entity_id, aabb)
         
@@ -445,9 +460,13 @@ class CollisionSystem:
         ], dtype=np.float32)
     
     def _get_shape(self, state: State, entity_id: EntityID) -> CollisionShapeComponent | None:
-        """Get collision shape from state metadata."""
-        # This would look up the shape from entity manager
-        return None
+        """Get collision shape from the entity's stored components."""
+        if self.scene is None:
+            return None
+        entity = self.scene.entities.get(entity_id)
+        if entity is None:
+            return None
+        return entity.user_data.get('collision_shape')
     
     def _get_transform(self, state: State, entity_id: EntityID) -> np.ndarray:
         """Get 4x4 world transform for entity."""

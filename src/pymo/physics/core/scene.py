@@ -173,7 +173,16 @@ class Scene:
     def _populate_state_from_entities(self, state: State) -> None:
         """Copy entity component data into state arrays."""
         from .component import TransformComponent, RigidBodyComponent, CollisionShapeComponent
-        
+
+        # Build EntityID -> array-index mappings for solvers/collision lookups
+        state.entity_to_rigid.clear()
+        state.entity_to_sph.clear()
+        for entity in self.entities:
+            if entity.rigid_index is not None:
+                state.entity_to_rigid[entity.id] = entity.rigid_index
+            if entity.sph_start is not None:
+                state.entity_to_sph[entity.id] = entity.sph_start
+
         for entity in self.entities:
             if entity.has(ComponentMask.RIGID_BODY) and entity.rigid_index is not None:
                 i = entity.rigid_index
