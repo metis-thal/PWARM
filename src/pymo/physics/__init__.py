@@ -215,6 +215,7 @@ class WorldEngine:
         shape_comp = CollisionShapeComponent()
         shape_comp.friction = shape_params.get("friction", 0.5) if shape_params else 0.5
         shape_comp.restitution = shape_params.get("restitution", 0.0) if shape_params else 0.0
+        shape_comp.use_ccd = bool(shape_params.get("use_ccd", False)) if shape_params else False
         if shape == "sphere":
             shape_comp.shape_type = CollisionShapeComponent.ShapeType.SPHERE
             shape_comp.radius = shape_params.get("radius", 0.5) if shape_params else 0.5

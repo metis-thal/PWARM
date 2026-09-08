@@ -499,6 +499,38 @@ class GJKNarrowPhase:
 
         return None  # iteration budget exhausted: treat as separated
 
+    # -- GJK distance ---------------------------------------------------------
+
+    def distance(self, a, ta, b, tb) -> float:
+        """Separation distance between two convex shapes (0 if overlapping).
+
+        GJK distance mode: iterates the closest point of the Minkowski
+        difference to the origin; its norm is the separation distance.
+        """
+        if self.collide(a, ta, b, tb) is not None:
+            return 0.0
+
+        d = ta[:3, 3] - tb[:3, 3]
+        if float(np.linalg.norm(d)) < 1e-8:
+            d = np.array([0.0, 0.0, 1.0])
+
+        simplex = [self._minkowski(a, ta, b, tb, d)]
+        q, _ = self._closest_point_on_simplex(simplex)
+        prev_norm = float(np.linalg.norm(q))
+        for _ in range(32):
+            d = -q
+            if float(np.linalg.norm(d)) < 1e-12:
+                return 0.0
+            s = self._minkowski(a, ta, b, tb, d)
+            simplex.append(s)
+            q, subset = self._closest_point_on_simplex(simplex)
+            simplex[:] = [simplex[i] for i in subset]
+            norm = float(np.linalg.norm(q))
+            if prev_norm - norm < 1e-7:
+                break  # support no longer improves: converged
+            prev_norm = norm
+        return prev_norm
+
     # -- EPA ------------------------------------------------------------------
 
     def _epa(self, a, ta, b, tb, simplex: list[np.ndarray]) -> Contact | None:
@@ -605,22 +637,71 @@ class GJKNarrowPhase:
 class ConservativeCCD:
     """
     Conservative Continuous Collision Detection.
-    
-    Swept volumes + linear motion bounds. Catches tunneling for fast objects.
+
+    Conservative advancement: repeatedly advance time by distance/speed (a
+    lower bound on the time of impact, so the impact can never be skipped)
+    until the shapes touch or the step ends. Prevents tunneling for
+    fast-moving bodies whose per-frame displacement exceeds their size.
     """
-    
+
     def __init__(self):
-        self.ccd_threshold = 0.01  # Minimum velocity for CCD
-    
-    def sweep(self, state: State, narrow_phase: GJKNarrowPhase) -> list[Contact]:
-        """Run CCD for fast-moving entities. Returns additional contacts."""
-        ccd_contacts = []
-        
-        # For each entity with CCD enabled and high velocity
-        # Compute swept AABB, test against other entities
-        # If collision, compute time of impact and contact
-        
-        return ccd_contacts
+        self.ccd_threshold = 0.01   # min separation treated as contact
+        self.max_iterations = 24
+
+    def advance(self, shape_a: CollisionShapeComponent, ta: np.ndarray, va: np.ndarray,
+                shape_b: CollisionShapeComponent, tb: np.ndarray, vb: np.ndarray,
+                dt: float, narrow_phase: GJKNarrowPhase) -> Contact | None:
+        """Time-of-impact query for A moving with va against B moving with vb
+        within a step of length dt. Returns a Contact at the TOI or None."""
+        v_rel = np.asarray(va, dtype=np.float64) - np.asarray(vb, dtype=np.float64)
+        speed = float(np.linalg.norm(v_rel))
+        if speed < 1e-9:
+            return None
+        direction = v_rel / speed
+
+        # Already overlapping: the discrete pipeline owns this pair
+        if narrow_phase.collide(shape_a, ta, shape_b, tb) is not None:
+            return None
+
+        t = 0.0
+        T = ta.copy()
+        for _ in range(self.max_iterations):
+            d = narrow_phase.distance(shape_a, T, shape_b, tb)
+            if d <= self.ccd_threshold:
+                break  # touching at time t
+            t += d / speed  # conservative: cannot skip past the impact
+            if t > dt:
+                return None  # no impact within this step
+            T = ta.copy()
+            T[:3, 3] = T[:3, 3] + np.asarray(va, dtype=np.float64) * t
+
+        if t <= 0.0 or t > dt:
+            return None
+
+        # Record A's center at the TOI. The solver rewinds the CCD mover to
+        # this position: end-of-step impulse resolution would otherwise leave
+        # the body far past the impact for very high speeds.
+        T_toi = ta.copy()
+        T_toi[:3, 3] = T_toi[:3, 3] + np.asarray(va, dtype=np.float64) * t
+
+        # Nudge slightly past the TOI so the narrow phase produces a real
+        # contact with the exact surface normal (TOI is a lower bound).
+        T2 = ta.copy()
+        T2[:3, 3] = T2[:3, 3] + np.asarray(va, dtype=np.float64) * min(t + 1e-3, dt)
+        contact = narrow_phase.collide(shape_a, T2, shape_b, tb)
+        if contact is None:
+            # Fallback: head-on approximation along the relative motion
+            contact = Contact(
+                entity_a=shape_a.entity_id, entity_b=shape_b.entity_id,
+                point=T2[:3, 3].astype(np.float32),
+                normal=direction.astype(np.float32),
+                depth=0.0,
+                friction=min(shape_a.friction, shape_b.friction),
+                restitution=min(shape_a.restitution, shape_b.restitution),
+            )
+        contact.time_of_impact = t
+        contact.point = T_toi[:3, 3].astype(np.float32)
+        return contact
 
 
 class CollisionSystem:
@@ -670,11 +751,58 @@ class CollisionSystem:
                 contact.solver_b = aabb_b.solver_type
                 contacts.append(contact)
         
-        # 4. CCD for fast objects
-        ccd_contacts = self.ccd.sweep(state, self.narrow_phase)
+        # 4. CCD for fast objects (opt-in via CollisionShapeComponent.use_ccd)
+        ccd_contacts = self._conservative_ccd(state)
         contacts.extend(ccd_contacts)
-        
+
         return ContactList(contacts)
+
+    def _conservative_ccd(self, state: State) -> list[Contact]:
+        """Run conservative advancement for CCD-enabled fast movers against
+        all other rigid bodies."""
+        out: list[Contact] = []
+        if state.rigid_pos is None or len(state.rigid_pos) == 0:
+            return out
+        dt = state.dt if state.dt and state.dt > 0 else 1.0 / 60.0
+        index_to_entity = {v: k for k, v in state.entity_to_rigid.items()}
+        n = len(state.rigid_pos)
+
+        movers = []
+        for i in range(n):
+            entity_id = index_to_entity.get(i)
+            if entity_id is None:
+                continue
+            shape = self._get_shape(state, entity_id)
+            if shape is None or not shape.use_ccd:
+                continue
+            vel = state.rigid_linvel[i] if state.rigid_linvel is not None else np.zeros(3)
+            if float(np.linalg.norm(vel)) * dt < 1e-6:
+                continue
+            movers.append((i, shape, self._get_transform(state, entity_id), vel))
+        if not movers:
+            return out
+
+        zeros = np.zeros(3, dtype=np.float32)
+        for i, shape_a, ta, va in movers:
+            entity_a = index_to_entity[i]
+            for j in range(n):
+                if j == i:
+                    continue
+                entity_b = index_to_entity.get(j)
+                if entity_b is None:
+                    continue
+                shape_b = self._get_shape(state, entity_b)
+                if shape_b is None:
+                    continue
+                tb = self._get_transform(state, entity_b)
+                vb = state.rigid_linvel[j] if state.rigid_linvel is not None else zeros
+                contact = self.ccd.advance(shape_a, ta, va, shape_b, tb, vb, dt,
+                                           self.narrow_phase)
+                if contact is not None:
+                    contact.solver_a = "rigid"
+                    contact.solver_b = "rigid"
+                    out.append(contact)
+        return out
     
     def _update_aabbs(self, state: State) -> None:
         """Update AABBs for all collision entities."""

@@ -48,10 +48,10 @@ def transform_at(x, y, z):
     return T
 
 
-def make_engine(*bodies):
+def make_engine(*bodies, gravity=(0.0, 0.0, -9.81)):
     """Build a WorldEngine from (position, mass, shape, shape_params) tuples."""
     config = WorldEngineConfig(
-        dt=1 / 60, substeps=1, gravity=(0.0, 0.0, -9.81), rigid={"enabled": True}
+        dt=1 / 60, substeps=1, gravity=gravity, rigid={"enabled": True}
     )
     engine = WorldEngine(config)
     for pos, mass, shape, params in bodies:
@@ -337,6 +337,50 @@ class TestGJKEPA:
         contact = self.np_.collide(cap, T, box, transform_at(0, 0, -1.0))
         if contact is not None:  # geometry may or may not touch at z=0.7
             assert np.dot(contact.normal, [0, 0, -1]) > 0.9
+
+
+# ---------------------------------------------------------------------------
+# Conservative CCD
+# ---------------------------------------------------------------------------
+
+class TestConservativeCCD:
+    def test_fast_ball_with_ccd_does_not_tunnel(self):
+        """Ball at 1300 m/s travels 21.7 m/frame — far more than the 11.5 m
+        clear window (slab 10 m + both radii). With use_ccd it must be
+        rewound to the time of impact and stopped; without CCD it deterministically
+        tunnels through the slab."""
+        def run(use_ccd):
+            engine = make_engine(
+                ((0, 0, 50), 1.0, "sphere",
+                 {"radius": 0.5, "use_ccd": use_ccd}),
+                ((0, 0, -5.0), 0.0, "box", {"half_extents": [20, 20, 5.0]}),
+                gravity=(0.0, 0.0, 0.0),
+            )
+            engine.scene.double_buffer_write.rigid_linvel[0][:] = [0.0, 0.0, -1300.0]
+            for _ in range(60):  # 1 s — enough to cross the whole scene
+                state = engine.tick()
+            return float(state.rigid_pos[0][2])
+
+        z_ccd = run(use_ccd=True)
+        assert -1.0 < z_ccd < 1.5, (
+            f"CCD ball ended at z={z_ccd}, expected to be stopped near surface"
+        )
+        z_no_ccd = run(use_ccd=False)
+        assert z_no_ccd < -100.0, (
+            f"control failed: ball without CCD should tunnel through (z={z_no_ccd})"
+        )
+
+    def test_ccd_ignores_slow_objects(self):
+        """Slow movers must not produce CCD contacts (discrete path owns them)."""
+        system = CollisionSystem()
+        sphere = make_sphere(0, 0, 0, 0.5)
+        box = make_box(0, 0, -1.0, 10, 10, 1.0)
+        contact = system.ccd.advance(
+            sphere, transform_at(0, 0, 5.0), np.array([0.0, 0.0, -0.1]),
+            box, transform_at(0, 0, -1.0), np.zeros(3),
+            dt=1 / 60, narrow_phase=system.narrow_phase,
+        )
+        assert contact is None  # TOI (50 s) far beyond the 16 ms step
 
 
 # ---------------------------------------------------------------------------

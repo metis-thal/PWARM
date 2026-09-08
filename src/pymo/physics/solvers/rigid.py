@@ -175,17 +175,42 @@ class RigidSolver:
                         state.rigid_linvel[idx_a] -= fric_impulse * inv_mass_a
                         state.rigid_linvel[idx_b] += fric_impulse * inv_mass_b
 
-                # Positional correction: push bodies out of penetration
-                # (prevents gradual sinking under gravity). Use partial
-                # correction with slop to reduce jitter and energy injection.
-                slop = 0.005
-                beta = 0.8
-                corr_mag = beta * max(contact.depth - slop, 0.0)
-                if corr_mag > 0:
-                    corr = contact.normal * corr_mag
-                    state.rigid_pos[idx_a] -= corr * (inv_mass_a / inv_mass_sum)
-                    state.rigid_pos[idx_b] += corr * (inv_mass_b / inv_mass_sum)
-        
+        # CCD rewind: contacts produced by conservative advancement carry the
+        # mover's center position at the time of impact. End-of-step impulse
+        # resolution would otherwise leave a very fast body far past the
+        # impact point, so rewind it (A is always the CCD mover by
+        # construction of CollisionSystem._conservative_ccd).
+        rewound: set[int] = set()
+        for contact in rigid_contacts:
+            if contact.time_of_impact <= 0.0:
+                continue
+            idx_a = state.entity_to_rigid.get(contact.entity_a)
+            if idx_a is None or idx_a in rewound:
+                continue
+            state.rigid_pos[idx_a] = np.asarray(contact.point, dtype=np.float32)
+            rewound.add(idx_a)
+
+        # Positional correction (single pass, once per contact): push bodies
+        # out of penetration to prevent gradual sinking under gravity.
+        # Partial correction with slop reduces jitter and energy injection.
+        slop = 0.005
+        beta = 0.8
+        for contact in rigid_contacts:
+            idx_a = state.entity_to_rigid.get(contact.entity_a)
+            idx_b = state.entity_to_rigid.get(contact.entity_b)
+            if idx_a is None or idx_b is None:
+                continue
+            inv_mass_a = state.rigid_inv_mass[idx_a]
+            inv_mass_b = state.rigid_inv_mass[idx_b]
+            inv_mass_sum = inv_mass_a + inv_mass_b
+            if inv_mass_sum == 0:
+                continue
+            corr_mag = beta * max(contact.depth - slop, 0.0)
+            if corr_mag > 0:
+                corr = contact.normal * corr_mag
+                state.rigid_pos[idx_a] -= corr * (inv_mass_a / inv_mass_sum)
+                state.rigid_pos[idx_b] += corr * (inv_mass_b / inv_mass_sum)
+
         return state
     
     def get_coupling_data(self, state: State) -> CouplingData:
