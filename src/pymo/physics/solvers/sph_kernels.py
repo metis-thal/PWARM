@@ -120,6 +120,8 @@ def _make_sph_forces():
                 gz = rz * inv_r
 
                 # Pressure force: -m_j * (p_i/rho_i^2 + p_j/rho_j^2) * grad W
+                # grad_W is computed as grad W(r_j - r_i) pointing from i to j
+                # For repulsion with positive pressure, force on i is opposite to grad_W
                 p_over_j = pressure[j] / (density[j] * density[j] + 1e-6)
                 p_term = p_over_i + p_over_j
                 fx -= mass[j] * p_term * gx
