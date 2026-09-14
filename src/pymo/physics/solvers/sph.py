@@ -13,6 +13,7 @@ from scipy.spatial import cKDTree
 
 from ..core.entity import ComponentMask
 from . import CouplingData
+from .sph_kernels import neighbors_to_csr, sph_density, sph_forces
 
 if TYPE_CHECKING:
     from ..core.scene import Scene
@@ -55,81 +56,39 @@ class SPHSolver:
         h = self.options.particle_radius * 2.0  # Smoothing length
         h2 = h * h
         
-        # 1. Neighbor search
+        # 1. Neighbor search (KD-tree), converted to CSR for the kernels
         neighbors = self._find_neighbors(state.sph_pos, h)
         new_state.sph_neighbor_indices = neighbors
-        
-        # 2. Compute density
-        density = np.zeros(n, dtype=np.float32)
-        for i in range(n):
-            for j in neighbors[i]:
-                if i == j:
-                    continue
-                r = state.sph_pos[j] - state.sph_pos[i]
-                r2 = np.dot(r, r)
-                if r2 < h2:
-                    density[i] += state.sph_mass[j] * self._kernel(r2, h)
-        density[i] += state.sph_mass[i] * self._kernel(0, h)
-        new_state.sph_density = density
-        
+        nbr_start, nbr_flat = neighbors_to_csr(neighbors)
+
+        # 2. Compute density (numba kernel with pure-Python fallback).
+        # Self-contribution included for every particle (the previous loop
+        # only applied it to the last index due to an indentation bug).
+        pos64 = state.sph_pos.astype(np.float64)
+        mass64 = state.sph_mass.astype(np.float64)
+        density = sph_density(pos64, mass64, nbr_start, nbr_flat, float(h))
+        new_state.sph_density = density.astype(np.float32)
+
         # 3. Compute pressure (Tait equation)
         pressure = self.options.stiffness * (density / self.options.rest_density - 1.0)
         pressure = np.maximum(pressure, 0)
-        new_state.sph_pressure = pressure
+        new_state.sph_pressure = pressure.astype(np.float32)
         
-        # 4. Compute forces
-        forces = np.zeros((n, 3), dtype=np.float32)
-        
-        # Pressure forces
-        for i in range(n):
-            for j in neighbors[i]:
-                if i == j:
-                    continue
-                r = state.sph_pos[j] - state.sph_pos[i]
-                r_norm = np.linalg.norm(r)
-                if r_norm < 1e-6:
-                    continue
-                
-                # Pressure force: -m_j * (p_i/rho_i^2 + p_j/rho_j^2) * grad W
-                grad_w = self._grad_kernel(r, r_norm, h)
-                p_term = (pressure[i] / (density[i]**2 + 1e-6) + 
-                         pressure[j] / (density[j]**2 + 1e-6))
-                forces[i] -= state.sph_mass[j] * p_term * grad_w
-        
-        # Viscosity forces
-        for i in range(n):
-            for j in neighbors[i]:
-                if i == j:
-                    continue
-                r = state.sph_pos[j] - state.sph_pos[i]
-                r_norm = np.linalg.norm(r)
-                if r_norm < 1e-6:
-                    continue
-                
-                # Artificial viscosity
-                v_ij = state.sph_vel[i] - state.sph_vel[j]
-                r_hat = r / r_norm
-                v_dot_r = np.dot(v_ij, r_hat)
-                
-                if v_dot_r < 0:
-                    mu = h * v_dot_r / (r_norm**2 + 0.01 * h2)
-                    pi_ij = (-self.options.viscosity * mu + 
-                            0.1 * mu**2) / ((density[i] + density[j]) * 0.5)
-                    grad_w = self._grad_kernel(r, r_norm, h)
-                    forces[i] -= state.sph_mass[j] * pi_ij * grad_w
-        
-        # Surface tension (simplified)
-        if self.options.surface_tension > 0:
-            for i in range(n):
-                for j in neighbors[i]:
-                    if i == j:
-                        continue
-                    r = state.sph_pos[j] - state.sph_pos[i]
-                    r_norm = np.linalg.norm(r)
-                    if r_norm < 1e-6:
-                        continue
-                    grad_w = self._grad_kernel(r, r_norm, h)
-                    forces[i] += self.options.surface_tension * state.sph_mass[j] * grad_w
+        # 4. Compute forces (pressure + viscosity + surface tension in a
+        # single neighbor pass; numba kernel with pure-Python fallback)
+        forces = sph_forces(
+            pos64,
+            state.sph_vel.astype(np.float64),
+            mass64,
+            density,
+            pressure,
+            nbr_start,
+            nbr_flat,
+            float(h),
+            float(self.options.viscosity),
+            float(self.options.surface_tension),
+        )
+        forces = forces.astype(np.float32)
         
         # 5. External forces (gravity)
         if self.scene:

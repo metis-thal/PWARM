@@ -12,6 +12,7 @@ import numpy as np
 
 from ..core.entity import ComponentMask
 from . import CouplingData
+from .contact_kernels import solve_contacts_velocity
 
 if TYPE_CHECKING:
     from ..core.scene import Scene
@@ -125,55 +126,33 @@ class RigidSolver:
         if not rigid_contacts:
             return state
         
-        # Simple impulse resolution (iterative)
-        for _ in range(self.options.max_iterations):
-            for contact in rigid_contacts:
-                # Get entity indices
-                idx_a = state.entity_to_rigid.get(contact.entity_a)
-                idx_b = state.entity_to_rigid.get(contact.entity_b)
-                
-                if idx_a is None or idx_b is None:
-                    continue
-                
-                # Compute relative velocity at contact point
-                v_a = state.rigid_linvel[idx_a]
-                v_b = state.rigid_linvel[idx_b]
-                rel_vel = v_b - v_a
-                
-                # Normal component
-                vn = np.dot(rel_vel, contact.normal)
-                
-                if vn > 0:  # Separating
-                    continue
-                
-                # Impulse magnitude
-                inv_mass_a = state.rigid_inv_mass[idx_a]
-                inv_mass_b = state.rigid_inv_mass[idx_b]
-                inv_mass_sum = inv_mass_a + inv_mass_b
+        # Resolve entity ids to array indices once; unresolved pairs are skipped
+        triples = []
+        for contact in rigid_contacts:
+            ia = state.entity_to_rigid.get(contact.entity_a)
+            ib = state.entity_to_rigid.get(contact.entity_b)
+            if ia is None or ib is None:
+                continue
+            triples.append((ia, ib, contact))
+        if not triples:
+            return state
 
-                if inv_mass_sum == 0:
-                    continue
+        m = len(triples)
+        idx_a_arr = np.array([t[0] for t in triples], dtype=np.int64)
+        idx_b_arr = np.array([t[1] for t in triples], dtype=np.int64)
+        normals = np.array([t[2].normal for t in triples], dtype=np.float64)
+        fric_arr = np.array([t[2].friction for t in triples], dtype=np.float64)
+        rest_arr = np.array([t[2].restitution for t in triples], dtype=np.float64)
 
-                j = -(1 + contact.restitution) * vn / inv_mass_sum
-                j = max(j, 0)
-
-                # Apply normal impulse
-                impulse = contact.normal * j
-                state.rigid_linvel[idx_a] -= impulse * inv_mass_a
-                state.rigid_linvel[idx_b] += impulse * inv_mass_b
-
-                # Coulomb friction: tangential impulse clamped to mu * j_n.
-                # Opposes the tangential slip of B relative to A.
-                if j > 0 and contact.friction > 0:
-                    tangential = rel_vel - vn * contact.normal
-                    t_len = float(np.linalg.norm(tangential))
-                    if t_len > 1e-6:
-                        t_hat = tangential / t_len
-                        jt_needed = t_len / inv_mass_sum
-                        jt = min(jt_needed, contact.friction * j)
-                        fric_impulse = -t_hat * jt
-                        state.rigid_linvel[idx_a] -= fric_impulse * inv_mass_a
-                        state.rigid_linvel[idx_b] += fric_impulse * inv_mass_b
+        # Velocity pass: sequential impulses over flat arrays
+        # (numba kernel when available, identical pure-Python fallback otherwise)
+        linvel = solve_contacts_velocity(
+            state.rigid_linvel.astype(np.float64),
+            state.rigid_inv_mass.astype(np.float64),
+            idx_a_arr, idx_b_arr, normals, fric_arr, rest_arr,
+            self.options.max_iterations,
+        )
+        state.rigid_linvel[:] = linvel.astype(np.float32)
 
         # CCD rewind: contacts produced by conservative advancement carry the
         # mover's center position at the time of impact. End-of-step impulse

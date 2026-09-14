@@ -201,6 +201,17 @@ class Scene:
                     state.rigid_inv_mass[i] = rb.inv_mass
                     state.rigid_inertia_local[i] = rb.inertia_local
                     state.rigid_inv_inertia_local[i] = rb.inv_inertia_local
+
+            if entity.has(ComponentMask.SPH_PARTICLE) and entity.sph_start is not None:
+                sph = entity.user_data.get('sph')
+                if sph is not None and sph.positions is not None:
+                    s = entity.sph_start
+                    e = s + len(sph.positions)
+                    state.sph_pos[s:e] = sph.positions
+                    if sph.velocities is not None:
+                        state.sph_vel[s:e] = sph.velocities
+                    if sph.masses is not None:
+                        state.sph_mass[s:e] = sph.masses
     
     def _checkpoint(self) -> None:
         """Save checkpoint for reproducibility."""

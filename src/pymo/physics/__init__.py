@@ -249,6 +249,47 @@ class WorldEngine:
             self.scene.double_buffer_write = self.scene._create_initial_state()
             self.scene.double_buffer_read = self.scene.double_buffer_write.copy()
             self._needs_state_rebuild = False
+
+    def create_sph_fluid(self,
+                         positions,
+                         velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
+                         mass: float | None = None):
+        """Create an SPH fluid entity from an (N, 3) array of particle positions.
+
+        Default mass = rest_density / kernel(0, h) with SPHOptions defaults
+        (rest_density=1000, h=2*particle_radius=0.05), i.e. the mass at which
+        a particle at lattice spacing ~h sits at rest density. For a lattice
+        at spacing d, choose mass = rest_density / (per-particle kernel sum)
+        to start at equilibrium pressure.
+        """
+        from .core.entity import Entity, EntityID, ComponentMask
+        from .core.component import SPHParticleComponent, TransformComponent
+
+        positions = np.asarray(positions, dtype=np.float32)
+        n = len(positions)
+
+        entity = Entity(id=EntityID(), name=f"sph_{len(self.scene.entities)}")
+        entity.mask = ComponentMask.SPH_PARTICLE
+
+        transform = TransformComponent()
+        transform.position = positions.mean(axis=0)
+        entity.add(ComponentMask.TRANSFORM)
+        entity.user_data['transform'] = transform
+
+        sph = SPHParticleComponent()
+        sph.positions = positions
+        sph.velocities = np.tile(np.array(velocity, dtype=np.float32), (n, 1))
+        if mass is None:
+            h = 2.0 * 0.025
+            mass = 1000.0 / (8.0 / (np.pi * h ** 3))  # 0.0491 kg
+        sph.masses = np.full(n, mass, dtype=np.float32)
+        entity.add(ComponentMask.SPH_PARTICLE)
+        entity.user_data['sph'] = sph
+
+        added_entity = self.scene.add_entity(entity)
+        self.scene.entities.set_particle_counts(added_entity, sph=n)
+        self._needs_state_rebuild = True
+        return added_entity
     
     def tick(self) -> State:
         """Single simulation step."""
