@@ -7,9 +7,14 @@ drift over 1000+ steps, and asserts drift < 0.1% for a well-resolved orbit.
 from __future__ import annotations
 
 import numpy as np
-from numba import njit
+import pytest
 
-from pymo.kernel.integrators import VerletIntegrator, relative_drift
+# This module JIT-compiles its acceleration kernel, so it can only run when
+# numba is installed (the main env may not have it); skip gracefully.
+pytest.importorskip("numba")
+from numba import njit  # noqa: E402
+
+from pymo.kernel.integrators import VerletIntegrator, relative_drift  # noqa: E402
 
 
 @njit(cache=True)
