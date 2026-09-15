@@ -256,11 +256,12 @@ class WorldEngine:
                          mass: float | None = None):
         """Create an SPH fluid entity from an (N, 3) array of particle positions.
 
-        Default mass = rest_density / kernel(0, h) with SPHOptions defaults
-        (rest_density=1000, h=2*particle_radius=0.05), i.e. the mass at which
-        a particle at lattice spacing ~h sits at rest density. For a lattice
-        at spacing d, choose mass = rest_density / (per-particle kernel sum)
-        to start at equilibrium pressure.
+        Default mass assumes the standard WCSPH lattice spacing
+        d = particle_radius = h/2 (0.025 with defaults), where the
+        cubic-spline per-particle kernel sum ~= 1/d^3, so
+        mass = rest_density * d^3 starts the lattice at equilibrium
+        (rest density, zero pressure). For a different lattice spacing,
+        pass mass = rest_density / (per-particle kernel sum) explicitly.
         """
         from .core.entity import Entity, EntityID, ComponentMask
         from .core.component import SPHParticleComponent, TransformComponent
@@ -280,8 +281,11 @@ class WorldEngine:
         sph.positions = positions
         sph.velocities = np.tile(np.array(velocity, dtype=np.float32), (n, 1))
         if mass is None:
-            h = 2.0 * 0.025
-            mass = 1000.0 / (8.0 / (np.pi * h ** 3))  # 0.0491 kg
+            # Standard WCSPH lattice: spacing d = particle_radius = h/2, so
+            # ~26 neighbors sit inside the kernel support. For the cubic
+            # spline at h = 2d the per-particle kernel sum ~= 1/d^3, hence
+            # mass = rest_density * d^3 starts the lattice at equilibrium.
+            mass = 1000.0 * 0.025 ** 3  # 0.015625 kg
         sph.masses = np.full(n, mass, dtype=np.float32)
         entity.add(ComponentMask.SPH_PARTICLE)
         entity.user_data['sph'] = sph
