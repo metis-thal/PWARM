@@ -1,0 +1,19 @@
+# World rules for universe_001 — what physics is active in this universe.
+# Rules are structural (the apparatus the scientist operates), not secrets:
+# the scientist knows what experiments it may run, not what the answers are.
+
+physics:
+  rigid: true
+  gravity_enabled: true
+  dt: 0.016666666666666666   # 1/60 s
+
+boundaries:
+  ground: true
+
+experiments:
+  allowed: [drop]
+
+notes: >
+  Air density is declared but no drag model is active yet — free fall in
+  this universe is currently vacuum-accurate. Mission 002 (materials) will
+  bring friction and elasticity into play.

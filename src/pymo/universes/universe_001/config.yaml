@@ -1,0 +1,21 @@
+# Universe 001 — the AI scientist's first unknown world.
+#
+# Values marked `hidden: true` are the GROUND TRUTH of this universe. They
+# are loaded ONLY on the physics side (pymo.scientist.experiment.Laboratory
+# reads them to configure the WorldEngine). The AI scientist layer never
+# imports this package: it can only propose experiments and observe outcomes.
+#
+# Core rule: physics engine is absolute truth; AI is a learned approximation.
+
+name: Unknown Planet
+
+gravity:
+  hidden: true
+  value: 9.81
+
+air:
+  hidden: true
+  density: 1.225
+
+materials:
+  hidden: true
