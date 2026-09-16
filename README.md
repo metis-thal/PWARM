@@ -225,6 +225,36 @@ renderer.close()
 
 Or run the interactive demo directly: `python scripts/demo_3d_physics.py`
 
+### P8: AI Physics Discovery — the First Closed Loop / AI物理发现闭环 (NEW)
+
+The world runs; the AI watches; the AI discovers the governing law; the demo
+verifies it against ground truth. The AI only ever sees recorded `(t, z)`
+samples — never the engine's gravity parameter.
+
+```bash
+python experiments/free_fall_ai/demo.py
+# CI / headless check (auto-quit after N frames):
+python experiments/free_fall_ai/demo.py --frames 140
+```
+
+Left: the real world (ground truth). Right: the AI's live hypothesis, fit and
+verdict. The console prints the observation log:
+
+```
+Hypothesis: z(t) = a*t^2 + b*t + c
+Searching... done
+
+  a = -4.905034   b = -0.081743   c = 10.000000
+  R^2 = 1.000000
+
+Ground Truth:  g = 9.8100 m/s^2
+AI Model:      g = 9.8101 m/s^2
+error:         0.0007 %   VERIFIED
+```
+
+Core rule demonstrated: physics is the truth, the AI is a learned
+approximation — and the gap is measured, not assumed.
+
 ### Geology Module / 地质模块
 
 ```python
@@ -305,6 +335,7 @@ pytest tests/viz/            # viz tests only / 仅渲染测试
 | P5: Geology module / 地质模块 | Phase 1 / 第一阶段 | 7 pass (4+3 skip) |
 | P6: Terrain viewer / 地形可视化器 | Done / 完成 | 4 pass (1 real data + 1 simulation + 1 viewer + 1 exe) |
 | **P7: Genesis-inspired Multi-Physics Engine** | **Done / 完成** | **4 pass (free-fall, collision, conservation, architecture)** |
+| **P8: AI Physics Discovery closed loop** | **Done / 完成** | **5 pass (gravity recovery, landing, safety)** |
 | **Total** | | **198+ pass** |
 
 ### Terrain Evolution Viewer / 地形演化可视化器
