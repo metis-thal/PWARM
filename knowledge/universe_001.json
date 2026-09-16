@@ -1,0 +1,20 @@
+{
+  "universe": "universe_001",
+  "updated": "2026-09-16T04:30:05+00:00",
+  "laws": [
+    {
+      "name": "gravity",
+      "formula": "z(t) = 10 + -0.0817539*t + -4.905*t^2",
+      "value": 9.80999401490266,
+      "unit": "m/s^2",
+      "confidence": 0.9999969262789308,
+      "r2": 0.9999999999999908,
+      "experiments": [
+        "drop_h10_m1",
+        "drop_h20_m1",
+        "drop_h5_m1"
+      ],
+      "derived_by": "polynomial"
+    }
+  ]
+}
