@@ -30,6 +30,10 @@ class DiscoveredLaw:
     predict: Callable[[np.ndarray], np.ndarray]  # f(X)
     r2: float                           # fit quality on training data
     backend: str
+    # Backend-native coefficients when available (polynomial backends:
+    # increasing order, coeffs[i] multiplies t**i). Lets callers interpret
+    # the discovered model without re-fitting or parsing the expression.
+    coeffs: np.ndarray | None = None
 
     def __repr__(self) -> str:
         return f"DiscoveredLaw({self.expression}, R2={self.r2:.4f}, via {self.backend})"
@@ -68,7 +72,7 @@ class PolynomialBackend:
         pred = predict(X)
         r2 = 1.0 - float(np.sum((y - pred) ** 2) / np.sum((y - y.mean()) ** 2))
         expression = f"{_format_poly(coeffs)}"
-        return DiscoveredLaw(expression, predict, r2, "polynomial")
+        return DiscoveredLaw(expression, predict, r2, "polynomial", coeffs=coeffs)
 
 
 class GplearnRefineBackend:
@@ -144,7 +148,7 @@ class GplearnRefineBackend:
         pred = predict(X)
         r2 = 1.0 - float(np.sum((y - pred) ** 2) / np.sum((y - y.mean()) ** 2))
         expression = f"{_format_poly(coeffs)}  [gp structure: {structure}]"
-        return DiscoveredLaw(expression, predict, r2, "gplearn+refine")
+        return DiscoveredLaw(expression, predict, r2, "gplearn+refine", coeffs=coeffs)
 
 
 def _format_poly(coeffs: np.ndarray) -> str:

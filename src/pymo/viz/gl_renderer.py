@@ -573,6 +573,11 @@ class GLRenderer:
         self._particle_color_buffer: moderngl.Buffer | None = None
         self._instanced_program: moderngl.Program | None = None
 
+        # Optional overlay hook: invoked after the 3D pass and before the
+        # buffer swap, so HUD panels can draw over the rendered frame
+        # (see pymo.viz.text_overlay.TextPanel). Signature: hook(renderer).
+        self.post_draw_hook = None  # Optional[Callable[[GLRenderer], None]]
+
     def _init_glfw(self) -> None:
         if not glfw.init():
             raise RuntimeError("Failed to initialize GLFW")
@@ -833,6 +838,17 @@ class GLRenderer:
             return self._last_snapshot.camera
         return CameraState()
 
+    @property
+    def ctx(self) -> "moderngl.Context | None":
+        """The moderngl context (for overlays). None before init()."""
+        return self._ctx
+
+    def framebuffer_size(self) -> tuple[int, int]:
+        """Current framebuffer size in pixels; (0, 0) if no window."""
+        if self._window is None:
+            return (0, 0)
+        return glfw.get_framebuffer_size(self._window)
+
     def init(self) -> None:
         """Initialize GLFW window, OpenGL context, shaders, and meshes (non-blocking)."""
         self._init_glfw()
@@ -841,13 +857,14 @@ class GLRenderer:
         self.running = True
 
     def poll_key(self) -> int:
-        """Poll for a key press. Returns the key code, or -1 if none."""
+        """Poll for a key press. Each press is returned exactly once, then -1
+        until the next press (so toggles like pause fire once per press)."""
         glfw.poll_events()
-        # Check registered key callback events
         if self._window is None:
             return -1
-        # Return last key pressed (stored by _on_key)
-        return getattr(self, '_last_key', -1)
+        key = getattr(self, '_last_key', -1)
+        self._last_key = -1
+        return key
 
     def render_frame(self) -> None:
         """Render one frame: read snapshot from buffer, draw, swap."""
@@ -857,6 +874,8 @@ class GLRenderer:
         if snap is not None:
             self._last_snapshot = snap
             self._draw_frame(snap)
+            if self.post_draw_hook is not None:
+                self.post_draw_hook(self)
             self._swap_buffers()
 
     def set_title(self, title: str) -> None:
