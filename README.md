@@ -255,6 +255,35 @@ error:         0.0007 %   VERIFIED
 Core rule demonstrated: physics is the truth, the AI is a learned
 approximation — and the gap is measured, not assumed.
 
+### Mission 001: AI Scientist — Discover Gravity / AI科学家·发现重力 (NEW)
+
+The `pymo.scientist` layer turns pymo from a physics simulator into an
+artificial scientist. Universe 001 declares hidden parameters (`gravity`,
+`air`, `materials`) that ONLY the physics side may read; the AI scientist
+receives a strict measurement-only channel and must earn its knowledge:
+
+```
+plan (3 independent drop heights) -> execute -> observe -> hypothesize
+-> cross-verify (same g from different heights = a law) -> publish
+```
+
+```bash
+python scripts/demo_mission_001.py
+```
+
+Measured: g = 9.8100 m/s² recovered independently from 5m, 10m and 20m
+drops — spread 0.0000%, confidence 100%. The knowledge base
+(`knowledge/universe_001.json`) persists across sessions: a second mission
+run concludes from civilization knowledge without re-running a single
+experiment.
+
+| Layer | Role / 角色 |
+|-------|------------|
+| `pymo.universes` | hidden ground truth, physics-side only / 隐藏真值，仅物理侧 |
+| `pymo.scientist.Laboratory` | executes experiments, returns measurements / 执行实验，只返回测量 |
+| `ScientistAgent` | plans, hypothesizes, cross-verifies, publishes / 规划-假设-验证-发表 |
+| `KnowledgeBase` | civilization knowledge (JSON, accumulates) / 文明知识，持续积累 |
+
 ### Geology Module / 地质模块
 
 ```python
@@ -336,6 +365,7 @@ pytest tests/viz/            # viz tests only / 仅渲染测试
 | P6: Terrain viewer / 地形可视化器 | Done / 完成 | 4 pass (1 real data + 1 simulation + 1 viewer + 1 exe) |
 | **P7: Genesis-inspired Multi-Physics Engine** | **Done / 完成** | **4 pass (free-fall, collision, conservation, architecture)** |
 | **P8: AI Physics Discovery closed loop** | **Done / 完成** | **5 pass (gravity recovery, landing, safety)** |
+| **Mission 001: AI Scientist — Discover Gravity** | **Done / 完成** | **5 pass (discovery, persistence, consistency)** |
 | **Total** | | **198+ pass** |
 
 ### Terrain Evolution Viewer / 地形演化可视化器
