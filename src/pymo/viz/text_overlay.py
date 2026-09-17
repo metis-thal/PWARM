@@ -113,7 +113,7 @@ class TextPanel:
                 break
             if isinstance(item, tuple):
                 text, color = item
-                rgb = ImageColor.getrgb(color)
+                rgb = ImageColor.getrgb(color) if color else ImageColor.getrgb(_DEFAULT_COLOR)
             else:
                 text, rgb = item, ImageColor.getrgb(_DEFAULT_COLOR)
             draw.text((self._margin, y), text, font=self._font,
