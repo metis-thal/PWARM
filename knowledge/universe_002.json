@@ -1,0 +1,57 @@
+{
+  "universe": "universe_002",
+  "updated": "2026-09-17T04:54:33+00:00",
+  "laws": [
+    {
+      "name": "material_A",
+      "formula": "material properties",
+      "value": 0.0,
+      "unit": "",
+      "confidence": 0.9760557280900009,
+      "r2": 1.0,
+      "experiments": [
+        "drop_test_material_A_h50",
+        "drop_test_material_B_h50",
+        "slide_test_material_A_v20",
+        "slide_test_material_B_v20"
+      ],
+      "derived_by": "adaptive-designer",
+      "properties": {
+        "restitution": 0.720991,
+        "friction": 0.400001
+      }
+    },
+    {
+      "name": "material_B",
+      "formula": "material properties",
+      "value": 0.0,
+      "unit": "",
+      "confidence": 0.9760557280900009,
+      "r2": 1.0,
+      "experiments": [
+        "drop_test_material_A_h50",
+        "drop_test_material_B_h50",
+        "slide_test_material_A_v20",
+        "slide_test_material_B_v20"
+      ],
+      "derived_by": "adaptive-designer",
+      "properties": {
+        "restitution": 0.454937,
+        "friction": 0.250001
+      }
+    },
+    {
+      "name": "gravity",
+      "formula": "g = 9.8100 m/s^2 (free-fall fit)",
+      "value": 9.80999075228161,
+      "unit": "m/s^2",
+      "confidence": 0.9821114561800015,
+      "r2": 1.0,
+      "experiments": [
+        "drop_test_material_A_h50"
+      ],
+      "derived_by": "adaptive-designer",
+      "properties": {}
+    }
+  ]
+}
