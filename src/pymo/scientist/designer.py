@@ -1,74 +1,91 @@
-"""Experiment Designer — the AI decides WHAT to test next, and WHY.
+"""Experiment designer — the AI scientist's decision-making.
 
-Replaces the fixed planner of Mission 001 with the Mission 002 loop:
+Mission 002 doctrine: rank candidate designs by expected information gain.
+Mission 003 doctrine: experiments cost resources, so the designer ranks by
+VALUE (expected utility per cost unit) under a live budget, never re-measures
+certain claims, only proposes experiment kinds its apparatus actually
+supports, and unlocks new kinds when an instrument grant arrives.
 
-    Unknowns -> Uncertainty Model -> Experiment Designer -> ...
+The decision pipeline:
 
-:func:`ExperimentDesigner.choose` scores every candidate design (experiment
-type x condition grid) by :func:`~pymo.scientist.information.expected_information_gain`
-against the current :class:`~pymo.scientist.state.ScientistState` and returns
-the single most informative proposal — with an explicit ``reason`` a human
-can audit. When no design clears the minimum gain, the designer returns
-None: the mission is concluded (or the remaining unknowns are
-unidentifiable — see ``unreachable_claims``).
-
-Scientific dependencies are respected: a slide test derives mu from the
-deceleration slope DIVIDED by g, so slide designs are only proposed once
-gravity is established.
+    candidate designs -> predicted gain + resolution -> utility (threshold-
+    aware) -> value = utility / cost -> affordability filter -> choice
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
-from .information import MeasurementModel, expected_information_gain
+from . import experiment_value
+from .information import MeasurementModel, expected_information_gain, relative_resolution
 from .state import ScientistState, suffix_name
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .budget import ExperimentBudget
 
 
 @dataclass(frozen=True)
 class ExperimentProposal:
-    """One chosen experiment, with the reasoning that justifies it."""
+    """One candidate experiment, with the economics that justify it."""
 
-    kind: str                      # "drop_test" | "slide_test"
-    design: dict                   # {"material": ..., "height": ...} / {"v0": ...}
+    kind: str                      # "drop_test" | "slide_test" | "buoyancy_test"
+    design: dict                   # {"material": ..., "height": ...} / {"v0": ...} / {"depth": ...}
     claim: str                     # primary parameter this design informs
     expected_gain: float           # fraction of prior interval expected to go
     rel_resolution: float          # expected relative measurement resolution
     reason: str
+    cost: float = 1.0              # Mission 003: apparatus cost units
+    expected_value: float = 0.0    # Mission 003: expected utility / cost
 
 
 class ExperimentDesigner:
-    """Scores candidate designs by expected information gain."""
+    """Scores candidate designs by expected VALUE under the budget."""
 
     def __init__(self,
                  drop_heights: tuple[float, ...] = (5.0, 10.0, 20.0, 50.0),
                  slide_speeds: tuple[float, ...] = (2.0, 5.0, 10.0, 20.0),
-                 min_gain: float = 0.05):
+                 buoyancy_depths: tuple[float, ...] = (1.0, 2.0, 4.0),
+                 min_gain: float = 0.05,
+                 enabled_kinds: tuple[str, ...] = ("drop_test", "slide_test")):
         self.drop_heights = tuple(drop_heights)
         self.slide_speeds = tuple(slide_speeds)
+        self.buoyancy_depths = tuple(buoyancy_depths)
         self.min_gain = min_gain
+        self.enabled_kinds = tuple(enabled_kinds)
+
+    def enable_kind(self, kind: str) -> None:
+        """Unlock an experiment kind (after an instrument grant)."""
+        if kind not in self.enabled_kinds:
+            self.enabled_kinds = self.enabled_kinds + (kind,)
 
     # -- candidate generation ------------------------------------------------
 
-    def _designs_for(self, claim: str) -> list[dict]:
+    def _designs_for(self, claim: str) -> list[tuple[str, dict]]:
+        """(kind, design) candidates for one claim's parameter suffix."""
         suffix = suffix_name(claim)
         material = claim.split(".", 1)[0] if "." in claim else None
         if suffix == "restitution":
-            return [{"material": material, "height": float(h)}
+            return [("drop_test", {"material": material, "height": float(h)})
                     for h in self.drop_heights]
         if suffix == "friction":
-            return [{"material": material, "v0": float(v)}
+            return [("slide_test", {"material": material, "v0": float(v)})
                     for v in self.slide_speeds]
+        if suffix == "density":
+            return [("buoyancy_test", {"material": material, "depth": float(d)})
+                    for d in self.buoyancy_depths]
         return []
 
     def _scored(self, state: ScientistState) -> list[ExperimentProposal]:
-        """All informative candidate designs, sorted by expected gain (desc).
+        """All informative candidate designs, ranked by expected value.
 
         A drop test informs TWO claims at once — its primary target
-        (restitution) and gravity as a byproduct of the free-fall fit — so
-        it appears under both; duplicates (same kind + design) keep the
-        max-gain claim. Slide designs require gravity to be established
-        first (mu = -slope/g is undefined otherwise).
+        (restitution) and gravity as a free-fall byproduct — so it appears
+        under both; duplicates (same kind + design) keep the highest-value
+        claim. Slide and buoyancy designs require gravity to be established
+        first (mu = -slope/g and rho = rho_f*g/(g-a) are undefined
+        otherwise). Kinds not yet enabled (no instrument grant) never
+        appear.
         """
         proposals: list[ExperimentProposal] = []
         gravity_known = (state.belief("gravity") is not None
@@ -78,67 +95,80 @@ class ExperimentDesigner:
 
         for claim in state.unknown_parameters():
             suffix = suffix_name(claim)
-            if suffix == "restitution":
-                material = claim.split(".", 1)[0]
-                for height in self.drop_heights:
-                    design = {"material": material, "height": height}
-                    eps = _resolution("drop_test", design)
-                    gain = expected_information_gain(
-                        state, MeasurementModel("drop_test", claim, design, eps))
-                    proposals.append(ExperimentProposal(
-                        "drop_test", design, claim, gain, eps, ""))
-            elif suffix == "friction":
-                if not gravity_known:
-                    continue
-                material = claim.split(".", 1)[0]
-                for v0 in self.slide_speeds:
-                    design = {"material": material, "v0": v0}
-                    eps = _resolution("slide_test", design)
-                    gain = expected_information_gain(
-                        state, MeasurementModel("slide_test", claim, design, eps))
-                    proposals.append(ExperimentProposal(
-                        "slide_test", design, claim, gain, eps, ""))
-            elif suffix == "gravity":
+            if suffix == "gravity":
                 # Any drop re-derives g from its free-fall segment.
                 if not materials:
                     continue
-                for height in self.drop_heights:
-                    design = {"material": materials[0], "height": height}
-                    eps = _resolution("drop_test", design)
-                    gain = expected_information_gain(
-                        state, MeasurementModel("drop_test", "gravity", design, eps))
-                    proposals.append(ExperimentProposal(
-                        "drop_test", design, "gravity", gain, eps, ""))
+                candidates = [("drop_test",
+                               {"material": materials[0], "height": float(h)})
+                              for h in self.drop_heights]
+            else:
+                candidates = self._designs_for(claim)
+
+            for kind, design in candidates:
+                if kind not in self.enabled_kinds:
+                    continue
+                if kind in ("slide_test", "buoyancy_test") and not gravity_known:
+                    continue
+                eps = relative_resolution(kind, design)
+                gain = expected_information_gain(
+                    state, MeasurementModel(kind, claim, design, eps))
+                cost = experiment_value.experiment_cost(kind, design)
+                utility = experiment_value.expected_utility(gain, kind, design)
+                proposals.append(ExperimentProposal(
+                    kind, design, claim, gain, eps, "",
+                    cost=cost,
+                    expected_value=utility / cost if cost > 0 else 0.0))
 
         # Deduplicate identical (kind, design) pairs across claims.
         best: dict[tuple, ExperimentProposal] = {}
         for p in proposals:
             key = (p.kind, tuple(sorted(p.design.items())))
-            if key not in best or p.expected_gain > best[key].expected_gain:
+            if key not in best or p.expected_value > best[key].expected_value:
                 best[key] = p
-        return sorted(best.values(), key=lambda p: p.expected_gain, reverse=True)
+        return experiment_value.rank(list(best.values()))
 
     # -- the designer's decision ---------------------------------------------
 
-    def choose(self, state: ScientistState) -> ExperimentProposal | None:
-        """The single most informative experiment, or None when nothing
-        clears the minimum-gain bar (mission concluded or stuck)."""
+    def available_experiments(self, state: ScientistState,
+                              budget: ExperimentBudget | None = None
+                              ) -> list[ExperimentProposal]:
+        """The ranked candidate menu (for dashboards and audits). Callers
+        check ``budget.can_afford(p.cost)`` to mark proposals unaffordable."""
+        return self._scored(state)
+
+    def choose(self, state: ScientistState,
+               budget: ExperimentBudget | None = None
+               ) -> ExperimentProposal | None:
+        """The best-value affordable experiment, or None when nothing
+        clears the minimum-gain bar, nothing is affordable, or the mission
+        has concluded."""
         scored = self._scored(state)
-        if not scored:
+        affordable = [p for p in scored
+                      if budget is None or budget.can_afford(p.cost)]
+        if not affordable:
             return None
-        best = scored[0]
+        best = affordable[0]
         if best.expected_gain < self.min_gain:
             return None
-        reason = (f"reduce {best.claim} uncertainty: expected gain "
-                  f"{best.expected_gain:.2f} of remaining interval "
-                  f"({self._describe(best.design)} — best of "
-                  f"{len(scored)} candidate designs)")
+        if budget is None:
+            budget_note = f"best of {len(affordable)} candidate designs"
+        else:
+            budget_note = (f"best of {len(affordable)} affordable designs; "
+                           f"budget {budget.used_experiments}/"
+                           f"{budget.experiments} experiments, "
+                           f"{budget.used_cost:.1f}/{budget.compute_cost:.1f} cost")
+        reason = (f"reduce {best.claim} uncertainty: value "
+                  f"{best.expected_value:.2f} = gain {best.expected_gain:.2f} "
+                  f"/ cost {best.cost:.1f} ({self._describe(best.design)} — "
+                  f"{budget_note})")
         return replace(best, reason=reason)
 
     def unreachable_claims(self, state: ScientistState) -> list[str]:
-        """Unknowns NO candidate design informs (density in a gravity+contact
-        world; Young's modulus without a deformable solver). These are the
-        honest "I cannot know this with my apparatus" parameters."""
+        """Unknowns NO enabled candidate design informs (density before the
+        fluid tank arrives; Young's modulus without a deformable solver).
+        These are the honest "I cannot know this with my apparatus"
+        parameters."""
         covered = {p.claim for p in self._scored(state)}
         return [n for n in state.unknown_parameters() if n not in covered]
 
@@ -147,8 +177,3 @@ class ExperimentDesigner:
         parts = [f"{k}={v:g}" if isinstance(v, float) else f"{k}={v}"
                  for k, v in sorted(design.items())]
         return ", ".join(parts)
-
-
-def _resolution(kind: str, design: dict) -> float:
-    from .information import relative_resolution
-    return relative_resolution(kind, design)

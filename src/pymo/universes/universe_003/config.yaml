@@ -1,0 +1,45 @@
+# Universe 003 — "Constrained World" (Mission 003: Science Under Constraints)
+#
+# Same KIND of hidden truth as universe_002, but the AI scientist now works
+# under an EXPERIMENT BUDGET, and the world's instrument catalog contains a
+# LOCKED Fluid Tank — the instrument the scientist must ASK FOR after
+# discovering that density is unidentifiable with drop/slide apparatus.
+
+name: Constrained World
+
+gravity:
+  hidden: true
+  value: 9.79          # deliberately different from universe_001/002
+
+materials:
+  hidden: true
+  material_A:
+    density: 7800      # steel-like
+    restitution: 0.72
+    friction: 0.40
+  material_B:
+    density: 2700      # aluminium-like
+    restitution: 0.45
+    friction: 0.25
+
+# Mission 003: the scientist's resource envelope (an AI-visible CONSTRAINT,
+# not a secret). Exactly enough for the 4 best-value experiments IF none
+# is wasted on redundant or too-coarse designs.
+budget:
+  experiments: 4
+  simulation_steps: 1400
+  compute_cost: 12.0
+
+# Instrumentation director's catalog. fluid_tank is LOCKED: the scientist
+# must analyze the density identifiability gap and request the capability.
+# The grant unlocks buoyancy_test AND extends the budget (instruments are
+# expensive).
+instruments:
+  fluid_tank:
+    capability: fluid_immersion
+    enables: buoyancy_test
+    locked: true
+    grant_budget:
+      experiments: 2
+      simulation_steps: 500
+      compute_cost: 8.0

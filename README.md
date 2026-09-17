@@ -337,6 +337,62 @@ civilization knowledge without re-running a single experiment.
 | `scientist.designer.ExperimentDesigner` | chooses designs by information gain / 按信息增益选择实验 |
 | `scientist.experiments` | drop_test, slide_test registry / 实验库（可扩展） |
 
+### Mission 003: Science Under Constraints / 约束下的科学 (NEW)
+
+Mission 002 assumed experiments were free. Mission 003 makes them COSTLY:
+universe_003 ("Constrained World", g = 9.79) grants the scientist a finite
+budget — 4 experiments / 1400 simulation steps / 12 cost units — so the
+question is no longer "what is most informative?" but **"what is worth its
+price?"**
+
+```
+Knowledge -> Unknowns -> Uncertainty -> Candidate Experiments
+-> Cost / Information -> Selection -> Experiment -> Observation
+-> Theory -> Knowledge -> New Unknowns -> (repeat)
+```
+
+```bash
+python scripts/demo_mission_003.py
+# CI / headless check (auto-quit after N frames):
+python scripts/demo_mission_003.py --frames 4000
+```
+
+The designer now ranks candidates by **value = expected utility / cost**
+with threshold-aware utility: a 10 m drop crosses the knowledge threshold
+(interval < 5%) at 1.5 cost units while a 50 m drop buys unused precision
+for 5.5 — so it buys the cheapest design that yields knowledge, and never
+re-measures what is already known. When candidates exist but cannot be
+afforded, the mission reports `BUDGET EXHAUSTED` (out of resources, never
+confused with unidentifiability).
+
+The payoff is the **instrument arc** — the scientist escapes "I cannot
+know this" on its own:
+
+```
+[UNIDENTIFIABLE] material_A.density — no observable of the current apparatus depends on it
+[UNIDENTIFIABLE] material_B.density — ...
+[INSTRUMENT REQUEST] fluid_tank (fluid_immersion)
+  why: drop and slide dynamics are density-invariant (equivalence principle)
+[GRANTED] fluid_tank: buoyancy_test unlocked, budget extended
+[PLAN] buoyancy_test (depth=1, material=material_A)
+  reason: reduce material_A.density uncertainty: value 0.78 = gain 0.98 / cost 1.2
+  -> material_A.density = 7799.9531  (R^2 = 1.0000)
+```
+
+Six self-chosen experiments recover all 7 hidden parameters (truth: g=9.79,
+steel 7800 / aluminium 2700 kg/m³, e=0.72/0.45, mu=0.40/0.25) — density via
+the Fluid Tank's buoyant force F = rho_fluid·g·V, which the drop/slide
+apparatus could never observe. Knowledge persists in
+`knowledge/universe_003.json`.
+
+| Layer | Role / 角色 |
+|-------|------------|
+| `scientist.budget.ExperimentBudget` | 3-currency resource ledger, grant-extendable / 三种资源的预算账本 |
+| `scientist.experiment_value` | cost model + value ranking / 成本模型与价值排序 |
+| `scientist.uncertainty` | known / measurable / unidentifiable classes / 确定度分类 |
+| `scientist.instrument` | gap analysis -> request -> catalog grant / 缺口分析→申请仪器→授权 |
+| `scientist.agent.run_constrained_mission` | the Mission 003 loop / Mission 003 主循环 |
+
 ### Geology Module / 地质模块
 
 ```python
@@ -421,6 +477,7 @@ pytest tests/viz/            # viz tests only / 仅渲染测试
 | **P8: AI Physics Discovery closed loop** | **Done / 完成** | **5 pass (gravity recovery, landing, safety)** |
 | **Mission 001: AI Scientist — Discover Gravity** | **Done / 完成** | **5 pass (discovery, persistence, consistency)** |
 | **Mission 002: Autonomous Scientific Experimentation** | **Done / 完成** | **8 pass (designer, identifiability, discovery)** |
+| **Mission 003: Science Under Constraints** | **Done / 完成** | **8 pass (budget value ranking, instrument arc, buoyancy density)** |
 | **Total** | | **206+ pass** |
 
 ### Terrain Evolution Viewer / 地形演化可视化器

@@ -43,6 +43,8 @@ class Universe:
     secrets: UniverseSecrets
     rules: dict
     manifest: tuple[str, ...] = ()
+    budget: dict | None = None        # Mission 003: the AI's resource envelope
+    instruments: dict | None = None   # Mission 003: instrument catalog (locked)
 
     @property
     def id(self) -> str:
@@ -103,9 +105,13 @@ def load_universe(universe_id: str) -> Universe:
         air_density=_hidden_value(config.get("air")),
         materials=materials,
     )
+    budget = config.get("budget")
+    instruments = config.get("instruments")
     return Universe(
         name=str(config.get("name", universe_id)),
         secrets=secrets,
         rules=rules,
         manifest=tuple(manifest),
+        budget=budget if isinstance(budget, dict) else None,
+        instruments=instruments if isinstance(instruments, dict) else None,
     )

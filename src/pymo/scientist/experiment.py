@@ -16,6 +16,11 @@ Experiment kinds:
                     bounce apex (the rebound reveals e)
     * ``slide_test`` material friction: launches a box at v0, records the
                     Coulomb deceleration until it stops
+    * ``buoyancy_test`` Mission 003 Fluid Tank instrument: releases the
+                    sample (built at its TRUE material density) below the
+                    water surface; the buoyant force makes the descent
+                    acceleration depend on density,
+                    a = g (1 - rho_fluid / rho)
 
 Apparatus: the ground is a hard anvil (friction 1.0, restitution 1.0) so the
 contact pair minimum passes the MATERIAL's properties through — the measured
@@ -27,6 +32,7 @@ observes results. The AI never configures physics directly.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -38,6 +44,11 @@ _SETTLE_FRAMES = 45        # "drop": keep simulating briefly after contact
 _BOUNCE_TIMEOUT = 120      # "drop_test": frames after contact with no apex
 _SLIDE_VX_STOP = 0.05      # "slide_test": below this the body is stopped
 _MAX_STEPS = 900           # hard safety cap per experiment
+
+# Fluid Tank instrument geometry (Mission 003) — apparatus, not secrets.
+_TANK_SURFACE_Z = 8.0      # water surface height
+_TANK_FLOOR_TOP_Z = 0.5    # tank floor top face
+_SAMPLE_RADIUS = 0.3       # buoyancy sample sphere
 
 
 @dataclass(frozen=True)
@@ -57,6 +68,8 @@ class ExperimentSpec:
             return f"drop_test_{self.material}_h{self.drop_height:g}"
         if self.kind == "slide_test":
             return f"slide_test_{self.material}_v{self.v0:g}"
+        if self.kind == "buoyancy_test":
+            return f"buoyancy_test_{self.material}_d{self.drop_height:g}"
         return f"drop_h{self.drop_height:g}_m{self.mass:g}"
 
 
@@ -68,6 +81,7 @@ class ObservationRecord:
     t: np.ndarray
     z: np.ndarray
     vx: np.ndarray | None = None    # slide_test only
+    steps: int = 0                  # world ticks consumed (budget accounting)
 
     @property
     def field_names(self) -> tuple[str, ...]:
@@ -89,7 +103,7 @@ class ExperimentSession:
             raise ValueError(
                 f"universe '{universe.name}' has no gravity secret; "
                 "experiments are undefined")
-        if spec.kind not in ("drop", "drop_test", "slide_test"):
+        if spec.kind not in ("drop", "drop_test", "slide_test", "buoyancy_test"):
             raise ValueError(f"unsupported experiment kind: {spec.kind}")
 
         # Material properties are a physics-side secret use: they flow into
@@ -111,6 +125,17 @@ class ExperimentSession:
             gravity=(0.0, 0.0, -gravity),
             rigid={"enabled": True},
         ))
+        self.t: list[float] = []
+        self.z: list[float] = []
+        self.vx: list[float] = []
+        self.running = True
+        self._steps = 0
+        self._contact_step = -1
+        self._recorded_done = False
+        self._bounced = False
+        self._fluid_volume = 0.0
+        self._fluid_density = 0.0
+        self._sample_radius = float(spec.radius)
 
         if spec.kind == "slide_test":
             if spec.v0 is None or spec.v0 <= 0.0:
@@ -136,6 +161,8 @@ class ExperimentSession:
             if state is not None and state.rigid_linvel is not None:
                 state.rigid_linvel[0] = np.array(
                     [spec.v0, 0.0, 0.0], dtype=np.float32)
+        elif spec.kind == "buoyancy_test":
+            self._build_fluid_tank(body_friction, body_restitution)
         else:  # "drop" / "drop_test"
             self._engine.create_rigid_body(
                 (0, 0, spec.drop_height), mass=spec.mass, shape="sphere",
@@ -150,14 +177,68 @@ class ExperimentSession:
             )
             self._engine.finalize_setup()
 
-        self.t: list[float] = []
-        self.z: list[float] = []
-        self.vx: list[float] = []
-        self.running = True
-        self._steps = 0
-        self._contact_step = -1
-        self._recorded_done = False
-        self._bounced = False
+    def _build_fluid_tank(self, body_friction: float,
+                          body_restitution: float) -> None:
+        """Fluid Tank instrument (Mission 003): a walled tank of water.
+
+        The sample sphere is built at the material's TRUE density
+        (mass = rho * V — read from the universe's secrets on the physics
+        side); this is the ONLY apparatus whose dynamics depend on density.
+        The tank applies the buoyant force each tick through the solver's
+        per-body force accumulator.
+        """
+        from .experiments.buoyancy_test import FLUID_DENSITY
+
+        props = self.universe.secrets.materials.get(self.spec.material or "")
+        if props is None or "density" not in props:
+            raise ValueError(
+                "buoyancy_test requires a material with a density secret: "
+                f"{self.spec.material!r}")
+        density = float(props["density"])
+        volume = 4.0 / 3.0 * math.pi * _SAMPLE_RADIUS ** 3
+        self._fluid_volume = volume
+        self._fluid_density = float(FLUID_DENSITY)
+        self._sample_radius = _SAMPLE_RADIUS
+
+        # Sample FIRST (rigid index 0 — the observation and buoyancy
+        # channels address the sample as body 0), at its true material
+        # density, released at rest below the surface (spec.drop_height =
+        # release depth below the surface).
+        release_z = _TANK_SURFACE_Z - float(self.spec.drop_height)
+        self._engine.create_rigid_body(
+            (0, 0, release_z), mass=density * volume, shape="sphere",
+            shape_params={"radius": _SAMPLE_RADIUS,
+                          "friction": body_friction,
+                          "restitution": body_restitution})
+
+        # Tank fixture: floor slab + four walls (static bodies).
+        self._engine.create_rigid_body(
+            (0, 0, 0.4), mass=0.0, shape="box",
+            shape_params={"half_extents": [2.2, 2.2, 0.1],
+                          "friction": 0.5, "restitution": 0.0})
+        for cx, cy, hx, hy in ((0.0, 2.0, 2.2, 0.1), (0.0, -2.0, 2.2, 0.1),
+                               (2.0, 0.0, 0.1, 2.2), (-2.0, 0.0, 0.1, 2.2)):
+            self._engine.create_rigid_body(
+                (cx, cy, 4.7), mass=0.0, shape="box",
+                shape_params={"half_extents": [hx, hy, 4.2],
+                              "friction": 0.1, "restitution": 0.0})
+        self._engine.finalize_setup()
+
+    def _apply_buoyancy(self) -> None:
+        """Apparatus action: F = rho_fluid * g * V (upward) on the submerged
+        sample, via the solver's per-body force accumulator. The world's
+        gravity stays untouched — the instrument applies a FORCE, exactly
+        like a real tank."""
+        write = self._engine.scene.double_buffer_write
+        if write is None or write.rigid_pos is None or len(write.rigid_pos) == 0:
+            return
+        if write.rigid_force_accum is None:
+            write.rigid_force_accum = np.zeros_like(write.rigid_pos)
+        if float(write.rigid_pos[0][2]) < _TANK_SURFACE_Z:
+            g = float(self.universe.secrets.gravity or 9.81)
+            f_buoy = self._fluid_density * g * self._fluid_volume
+            write.rigid_force_accum[0] = np.array(
+                [0.0, 0.0, f_buoy], dtype=np.float32)
 
     @property
     def engine(self):
@@ -182,6 +263,8 @@ class ExperimentSession:
         """Advance one tick. Returns True while the session is still running."""
         if not self.running:
             return False
+        if self.spec.kind == "buoyancy_test":
+            self._apply_buoyancy()
         st = self._engine.tick()
         self._steps += 1
         t = float(st.t)
@@ -218,6 +301,13 @@ class ExperimentSession:
                     self._recorded_done = True    # no bounce: restitution ~ 0
             elif vz < -0.05:
                 self._recorded_done = True        # descending past the apex
+        elif kind == "buoyancy_test":
+            # Record the submerged descent: a clean parabola whose curvature
+            # is g*(1 - rho_fluid/rho) — the density observable.
+            self.t.append(t)
+            self.z.append(z)
+            if z <= _TANK_FLOOR_TOP_Z + self._sample_radius:
+                self._recorded_done = True    # reached the tank floor
         else:  # "drop" — Mission 001 semantics: free-fall segment only
             if not self._recorded_done:
                 if z > self.spec.radius + _CONTACT_MARGIN:
@@ -228,8 +318,11 @@ class ExperimentSession:
                     self._recorded_done = True
 
         # Termination rules
-        if self._steps >= _MAX_STEPS or kind == "drop_test" and self._recorded_done or (kind == "drop" and self._recorded_done
-                and self._steps - self._contact_step >= _SETTLE_FRAMES):
+        if (self._steps >= _MAX_STEPS
+                or (kind in ("drop_test", "buoyancy_test")
+                    and self._recorded_done)
+                or (kind == "drop" and self._recorded_done
+                    and self._steps - self._contact_step >= _SETTLE_FRAMES)):
             self.running = False
         return self.running
 
@@ -241,6 +334,7 @@ class ExperimentSession:
             t=np.asarray(self.t, dtype=float),
             z=np.asarray(self.z, dtype=float),
             vx=(np.asarray(self.vx, dtype=float) if self.vx else None),
+            steps=self._steps,
         )
 
 
@@ -253,7 +347,8 @@ class Laboratory:
 
     def __init__(self, universe: Universe):
         self._universe = universe
-        self.supported_experiments = ("drop", "drop_test", "slide_test")
+        self.supported_experiments = ("drop", "drop_test", "slide_test",
+                                      "buoyancy_test")
 
     @property
     def universe_name(self) -> str:

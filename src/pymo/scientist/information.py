@@ -25,8 +25,10 @@ from .state import ScientistState
 # Apparatus resolution constants (relative, at reference conditions).
 _EPS_DROP_AT_10M = 0.02      # restitution from a 10 m drop
 _EPS_SLIDE_AT_5MS = 0.03     # friction from a 5 m/s slide
+_EPS_BUOYANCY_REF = 0.0245   # density from the Fluid Tank (reference fall)
 _H_REF = 10.0
 _V_REF = 5.0
+_D_REF = 5.2                 # buoyancy reference fall distance (release depth 2 m)
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,13 @@ def relative_resolution(kind: str, design: dict) -> float:
     if kind == "slide_test":
         v0 = float(design.get("v0", _V_REF))
         return _EPS_SLIDE_AT_5MS * math.sqrt(_V_REF / max(v0, 1e-6))
+    if kind == "buoyancy_test":
+        # The submerged-descent record spans a fall of ~(7.2 - depth) m in
+        # the tank; a longer window fits the parabola tighter (eps ~ 1/sqrt(T),
+        # T ~ sqrt(D)), so a SHALLOWER release resolves density better.
+        depth = float(design.get("depth", 2.0))
+        fall_distance = max(7.2 - depth, 0.5)
+        return _EPS_BUOYANCY_REF * math.sqrt(_D_REF / fall_distance)
     return float("inf")
 
 

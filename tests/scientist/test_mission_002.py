@@ -38,14 +38,17 @@ def lab():
     return Laboratory(load_universe("universe_002"))
 
 
-def test_designer_prefers_the_most_informative_design(lab):
+def test_designer_prefers_the_best_value_design(lab):
     knowledge = KnowledgeBase(Path(tmp_knowledge()), universe="universe_002")
     state = ScientistState(load_universe("universe_002").manifest, knowledge)
     proposal = ExperimentDesigner().choose(state)
     assert proposal is not None
-    # A taller drop resolves restitution better (eps ~ 1/sqrt(h)).
-    assert proposal.design["height"] == 50.0
-    assert "reduce" in proposal.reason and "gain" in proposal.reason
+    # Mission 003 economics supersede raw gain: a 10 m drop already crosses
+    # the knowledge threshold (eps 2%) at 1.5 cost units, while a 50 m drop
+    # buys unused precision for 5.5 — value = utility/cost picks h=10.
+    assert proposal.design["height"] == 10.0
+    assert proposal.cost == pytest.approx(1.5)
+    assert "reduce" in proposal.reason and "value" in proposal.reason
 
 
 def test_slide_design_requires_gravity_first(lab):

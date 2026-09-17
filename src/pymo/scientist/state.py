@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .knowledge import KnowledgeBase
+from .uncertainty import KNOWN_REL_WIDTH as _KNOWN_REL_WIDTH
 
 # Prior intervals by parameter-name suffix (the AI's starting ignorance).
 DEFAULT_PRIOR_BOUNDS: dict[str, tuple[float, float]] = {
@@ -27,8 +28,6 @@ DEFAULT_PRIOR_BOUNDS: dict[str, tuple[float, float]] = {
     "young_modulus": (0.0, 1e12),
 }
 
-_KNOWN_REL_WIDTH = 0.05     # interval narrower than 5% → "known" (the slide
-                            # apparatus' best resolution is ~3% at v0=20)
 _ABS_FLOOR = 1e-9
 
 
@@ -119,6 +118,16 @@ class ScientistState:
             return
         belief.status = "unidentifiable"
         belief.reason = reason
+
+    def revive(self, name: str) -> None:
+        """Restore a claim to "unknown" — a NEW instrument may make it
+        identifiable where the old apparatus could not (Mission 003's
+        instrument arc: unidentifiable -> request -> grant -> measurable)."""
+        belief = self.beliefs.get(name)
+        if belief is None:
+            return
+        belief.status = "unknown"
+        belief.reason = ""
 
     def sync_from_knowledge(self) -> None:
         """Collapse intervals for everything the knowledge base establishes."""

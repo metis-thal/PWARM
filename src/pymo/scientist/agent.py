@@ -14,10 +14,12 @@ executes them, the AI observes results. The agent's only data channel is
 
 from __future__ import annotations
 
+from .budget import ExperimentBudget
 from .designer import ExperimentDesigner
 from .experiment import ExperimentSpec, Laboratory, ObservationRecord
 from .experiments import REGISTRY
 from .hypothesis import Hypothesis, Verification, fit_free_fall, verify
+from .instrument import InstrumentCatalog, analyze_gap
 from .knowledge import KnowledgeBase
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
@@ -204,7 +206,156 @@ class ScientistAgent:
                 claim, "no available experiment informs this parameter "
                        "(identifiability limit of the current apparatus)")
 
-        # Publish established material properties to the knowledge base.
+        # Publish everything established to the knowledge base.
+        published, confidence_best = self.publish_established(state, hypotheses)
+
+        summary = state.report()
+        if proposal_log:
+            summary += "\n\nexperiment proposals:\n" + "\n".join(
+                f"  {i + 1}. {reason}" for i, reason in enumerate(proposal_log))
+
+        return MissionReport(
+            mission_id=mission.id,
+            status="DISCOVERED" if published else "INCOMPLETE",
+            experiments_run=experiments_run,
+            estimates=[h.value for h in hypotheses],
+            confidence=confidence_best,
+            formula="material properties" if published else "",
+            knowledge_saved=published > 0,
+            summary=summary,
+        )
+
+    # -- Mission 003: science under constraints --------------------------------
+
+    def run_constrained_mission(self, mission: Mission, state: ScientistState,
+                                budget: ExperimentBudget,
+                                designer: ExperimentDesigner | None = None,
+                                catalog: InstrumentCatalog | None = None,
+                                max_experiments: int = 16) -> MissionReport:
+        """The Mission 003 loop: value-ranked choices under a live budget.
+
+        Two differences from :meth:`run_adaptive_mission`:
+
+        * Every candidate design has a COST; the designer ranks by value
+          (expected utility / cost) and only affordable designs are chosen.
+          Each executed experiment DEBITS the budget — experiments, world
+          ticks and cost units all count.
+        * When the apparatus cannot inform a claim at all, the claim is
+          marked unidentifiable, the gap analysis names the missing
+          capability, and an INSTRUMENT REQUEST is filed. If the universe's
+          instrument catalog grants it, the budget is EXTENDED (only the
+          grant path may do this — never the scientist), the new experiment
+          kind is unlocked, and the loop CONTINUES: the claim gets a second
+          chance with the new instrument.
+
+        ``budget_exhausted`` is the honest outcome when candidates exist but
+        cannot be afforded — reported as out-of-resources, never confused
+        with unidentifiability.
+        """
+        designer = designer or ExperimentDesigner()
+        hypotheses: list[Hypothesis] = []
+        proposal_log: list[str] = []
+        instrument_log: list[str] = []
+        experiments_run = 0
+        budget_exhausted = False
+
+        for _ in range(max_experiments):
+            proposal = designer.choose(state, budget)
+            if proposal is None:
+                if designer.available_experiments(state):
+                    budget_exhausted = True
+                    break
+                # Honest metacognition: unknowns no enabled design informs.
+                for claim in designer.unreachable_claims(state):
+                    state.mark_unidentifiable(
+                        claim, "no available experiment informs this parameter "
+                               "(identifiability limit of the current apparatus)")
+                request = analyze_gap(state) if catalog is not None else None
+                if request is None:
+                    break
+                grant = catalog.grant(request)
+                if grant is None:
+                    break   # no such instrument (or already granted): stay honest
+                budget.extend(**{key: grant.budget.get(key, 0)
+                                 for key in ("experiments", "simulation_steps",
+                                             "compute_cost")})
+                designer.enable_kind(grant.enables)
+                for claim in request.target_claims:
+                    state.revive(claim)
+                instrument_log.append(
+                    f"requested {request.instrument} ({request.capability}) "
+                    f"-> GRANTED; unlocks {grant.enables} for "
+                    f"{', '.join(request.target_claims)}")
+                continue
+
+            proposal_log.append(proposal.reason)
+            spec = ExperimentSpec(
+                kind=proposal.kind,
+                drop_height=float(proposal.design.get(
+                    "height", proposal.design.get("depth", 10.0))),
+                v0=proposal.design.get("v0"),
+                material=proposal.design.get("material"),
+            )
+            record = self.laboratory.run_experiment(spec)
+            budget.spend(proposal.cost, record.steps)
+            experiments_run += 1
+            self.observe(record)
+
+            g_known = None
+            gravity_belief = state.belief("gravity")
+            if gravity_belief is not None and gravity_belief.status == "known":
+                g_known = gravity_belief.midpoint
+            module = REGISTRY[proposal.kind]
+            hypothesis, fitted_g = module.derive(
+                record, g_known, proposal.design.get("material", "material"))
+            hypotheses.append(hypothesis)
+            # One experiment can advance two claims: its own target plus the
+            # free-fall gravity byproduct (drop and buoyancy both fall).
+            state.update(hypothesis.claim, hypothesis.value,
+                         proposal.rel_resolution)
+            if (fitted_g is not None and "gravity" in state.beliefs
+                    and state.beliefs["gravity"].status != "known"):
+                state.update("gravity", fitted_g, proposal.rel_resolution)
+
+        if not budget_exhausted:
+            # Max-experiment cutoff (or a finished arc): anything still
+            # uninformed by the enabled apparatus stays honestly marked.
+            for claim in designer.unreachable_claims(state):
+                state.mark_unidentifiable(
+                    claim, "no available experiment informs this parameter "
+                           "(identifiability limit of the current apparatus)")
+
+        published, confidence_best = self.publish_established(state, hypotheses)
+
+        summary = state.report()
+        summary += "\n\nbudget:\n" + "\n".join(budget.report_lines())
+        if instrument_log:
+            summary += "\n\ninstrument arc:\n" + "\n".join(
+                f"  {line}" for line in instrument_log)
+        if budget_exhausted:
+            summary += ("\n\nBUDGET EXHAUSTED: informative candidates remain "
+                        "but cannot be afforded.")
+        if proposal_log:
+            summary += "\n\nexperiment proposals:\n" + "\n".join(
+                f"  {i + 1}. {reason}" for i, reason in enumerate(proposal_log))
+
+        return MissionReport(
+            mission_id=mission.id,
+            status="DISCOVERED" if published else "INCOMPLETE",
+            experiments_run=experiments_run,
+            estimates=[h.value for h in hypotheses],
+            confidence=confidence_best,
+            formula="material properties" if published else "",
+            knowledge_saved=published > 0,
+            summary=summary,
+        )
+
+    # -- publication -----------------------------------------------------------
+
+    def publish_established(self, state: ScientistState,
+                             hypotheses: list[Hypothesis]) -> tuple[int, float]:
+        """Publish established material properties + gravity to the
+        knowledge base. Returns (entries published, best confidence)."""
         published = 0
         confidence_best = 0.0
         materials = sorted({n.split(".", 1)[0] for n in state.beliefs if "." in n})
@@ -247,22 +398,7 @@ class ScientistAgent:
             published += 1
         if published:
             self.knowledge.save()
-
-        summary = state.report()
-        if proposal_log:
-            summary += "\n\nexperiment proposals:\n" + "\n".join(
-                f"  {i + 1}. {reason}" for i, reason in enumerate(proposal_log))
-
-        return MissionReport(
-            mission_id=mission.id,
-            status="DISCOVERED" if published else "INCOMPLETE",
-            experiments_run=experiments_run,
-            estimates=[h.value for h in hypotheses],
-            confidence=confidence_best,
-            formula="material properties" if published else "",
-            knowledge_saved=published > 0,
-            summary=summary,
-        )
+        return published, confidence_best
 
 
 _MIN_FIT_SAMPLES = 5

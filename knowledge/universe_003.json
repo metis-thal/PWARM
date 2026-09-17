@@ -1,0 +1,63 @@
+{
+  "universe": "universe_003",
+  "updated": "2026-09-17T07:38:28+00:00",
+  "laws": [
+    {
+      "name": "material_A",
+      "formula": "material properties",
+      "value": 0.0,
+      "unit": "",
+      "confidence": 0.9575662856932079,
+      "r2": 1.0,
+      "experiments": [
+        "drop_test_material_A_h10",
+        "drop_test_material_B_h10",
+        "slide_test_material_A_v10",
+        "slide_test_material_B_v10",
+        "buoyancy_test_material_A_d1",
+        "buoyancy_test_material_B_d1"
+      ],
+      "derived_by": "adaptive-designer",
+      "properties": {
+        "density": 7799.953054,
+        "restitution": 0.725178,
+        "friction": 0.4
+      }
+    },
+    {
+      "name": "material_B",
+      "formula": "material properties",
+      "value": 0.0,
+      "unit": "",
+      "confidence": 0.9575662856932079,
+      "r2": 1.0,
+      "experiments": [
+        "drop_test_material_A_h10",
+        "drop_test_material_B_h10",
+        "slide_test_material_A_v10",
+        "slide_test_material_B_v10",
+        "buoyancy_test_material_A_d1",
+        "buoyancy_test_material_B_d1"
+      ],
+      "derived_by": "adaptive-designer",
+      "properties": {
+        "density": 2699.996692,
+        "restitution": 0.465629,
+        "friction": 0.249999
+      }
+    },
+    {
+      "name": "gravity",
+      "formula": "g = 9.7900 m/s^2 (free-fall fit)",
+      "value": 9.790003259127065,
+      "unit": "m/s^2",
+      "confidence": 0.9600000000000002,
+      "r2": 1.0,
+      "experiments": [
+        "drop_test_material_A_h10"
+      ],
+      "derived_by": "adaptive-designer",
+      "properties": {}
+    }
+  ]
+}
