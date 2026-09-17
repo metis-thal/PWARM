@@ -1,4 +1,4 @@
-# pymo — Physical World AI Reasoning Model / 物理世界AI推理模型
+# PWARM — Physical World AI Reasoning Model / 物理世界AI推理模型
 
 A self-evolving virtual physics world. All phenomena (rigid body, fluid, thermal, collision, deformation, reaction) emerge from bottom-up differential equations — no hardcoded animations, no preset events. An AI layer observes the simulated world, discovers physical laws, and continuously refines its world model.
 
