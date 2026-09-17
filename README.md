@@ -1,4 +1,5 @@
 # PWARM
+Physical Word AI Reasoning Model
 
 ### 一个自主科学发现的开放研究环境 / An open research environment for autonomous scientific discovery.
 
@@ -148,8 +149,6 @@ Budget → Value Ranking → Experiment → Gap Analysis → Instrument Request 
 
 ```
 src/pymo/
-├── kernel/     # 旧版 2D/3D 物理内核 (已弃用，保留兼容性)
-│               # Legacy 2D/3D physics kernels (deprecated, kept for compatibility)
 ├── geology/    # 地质系统：地层学、热传导、侵蚀、构造运动
 │               # Stratigraphy, thermal conduction, erosion, tectonics
 ├── rules/      # 多学科规则：力学、热力学、流体、材料、化学

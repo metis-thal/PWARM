@@ -241,8 +241,6 @@ class SPHSystem:
 
         Corrector: recompute a_{n+1}, then v_{n+1} = v_{n+1/2} + a_{n+1} * dt/2
         """
-        params = self.params
-
         # --- Predictor ---
         self._build_neighbors()
         self.compute_density_and_pressure()
@@ -257,7 +255,6 @@ class SPHSystem:
 
         # --- Corrector ---
         # Use predicted positions for neighbor search
-        old_positions = [p.pos.copy() for p in self.particles]
         for p in self.particles:
             p.pos = p.pos_predicted
 

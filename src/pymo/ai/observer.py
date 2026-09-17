@@ -8,10 +8,12 @@ that the AI layer uses to discover physical laws.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from pymo.kernel.world import World
+if TYPE_CHECKING:
+    from pymo.kernel.world import World
 
 
 @dataclass
