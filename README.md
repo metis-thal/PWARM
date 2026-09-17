@@ -1,5 +1,5 @@
 # PWARM
-Physical Word AI Reasoning Model
+Physical World AI Reasoning Model
 
 ### 一个自主科学发现的开放研究环境 / An open research environment for autonomous scientific discovery.
 
@@ -169,14 +169,16 @@ src/pymo/
 │               # URDF/MJCF/GLTF parsers, GUI, Sensors, Parallel envs
 ├── scientist/  # AI 科学家层
 │               # The AI scientist layer
-│   ├── state/  # 自我模型：不确定度区间 + 状态
-│   │           # Self-model: uncertainty intervals + statuses
-│   ├── information/ # 测量分辨率模型
-│   │           # Measurement resolution models
-│   ├── designer/ # 按价值 = 增益 / 成本选择实验
-│   │           # Choose experiments by value = gain / cost
-│   ├── instrument/ # 缺口分析 → 申请 → 目录授权
-│   │           # Gap analysis → request → catalog grant
+│   ├── state.py # 自我模型：不确定度区间 + 状态
+│   │            # Self-model: uncertainty intervals + statuses
+│   ├── information.py # 测量分辨率模型
+│   │            # Measurement resolution models
+│   ├── designer.py # 按价值 = 增益 / 成本选择实验
+│   │            # Choose experiments by value = gain / cost
+│   ├── budget.py + experiment_value.py # 预算账本 + 价值排序
+│   │            # Budget ledger + value ranking
+│   ├── instrument.py # 缺口分析 → 申请 → 目录授权
+│   │            # Gap analysis → request → catalog grant
 │   └── experiments/ # 落体测试、滑动测试、浮力测试
 │                   # drop_test, slide_test, buoyancy_test
 └── viz/        # OpenGL GPU 实例化、PBR、光线追踪
