@@ -26,6 +26,9 @@ class LawRecord:
     r2: float
     experiments: list[str] = field(default_factory=list)
     derived_by: str = ""
+    # Material laws carry named properties instead of a single value
+    # (e.g. {"restitution": 0.72, "friction": 0.4}).
+    properties: dict[str, float] = field(default_factory=dict)
 
 
 class KnowledgeBase:
@@ -60,6 +63,7 @@ class KnowledgeBase:
                 r2=float(rec.get("r2", 0.0)),
                 experiments=list(rec.get("experiments", [])),
                 derived_by=rec.get("derived_by", ""),
+                properties=dict(rec.get("properties", {})),
             )
             for rec in data.get("laws", [])
         }
@@ -98,6 +102,26 @@ class KnowledgeBase:
         )
         self.laws[name] = rec
         return rec
+
+    def record_material(self, material: str, properties: dict[str, float],
+                        confidence: float, r2: float, experiments: list[str],
+                        derived_by: str) -> LawRecord:
+        """Publish a material's measured property set as one knowledge entry."""
+        rec = LawRecord(
+            name=material, formula="material properties", value=0.0, unit="",
+            confidence=confidence, r2=r2,
+            experiments=list(experiments), derived_by=derived_by,
+            properties=dict(properties),
+        )
+        self.laws[material] = rec
+        return rec
+
+    def material(self, name: str) -> dict[str, float] | None:
+        """A material's measured properties, or None if unknown."""
+        rec = self.laws.get(name)
+        if rec is None or not rec.properties:
+            return None
+        return dict(rec.properties)
 
     def summary(self) -> str:
         if not self.laws:
