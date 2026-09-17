@@ -284,6 +284,59 @@ experiment.
 | `ScientistAgent` | plans, hypothesizes, cross-verifies, publishes / 规划-假设-验证-发表 |
 | `KnowledgeBase` | civilization knowledge (JSON, accumulates) / 文明知识，持续积累 |
 
+### Mission 002: Autonomous Scientific Experimentation / 自主科学实验 (NEW)
+
+Mission 001 proved the AI can discover a law it was told to look for.
+Mission 002 upgrades the scientific method itself: **the AI decides what to
+measure.** Universe 002 ("Material World") hides two materials with unknown
+`density`, `restitution` and `friction`; the AI scientist runs the loop
+
+```
+Unknowns -> Uncertainty Model -> Experiment Designer -> Experiment
+-> Observation -> Theory -> Knowledge
+```
+
+```bash
+python scripts/demo_mission_002.py
+# CI / headless check (auto-quit after N frames):
+python scripts/demo_mission_002.py --frames 2200
+```
+
+The scientist models every unknown as an interval, scores candidate
+experiment designs by expected information gain (a 50 m drop resolves
+restitution ~2.2x better than a 5 m drop — resolution eps ~ 1/sqrt(h)),
+respects scientific dependencies (friction needs gravity first:
+mu = -slope/g), and harvests byproducts — one drop derives BOTH gravity
+(free-fall fit) and the material's restitution (bounce ratio). It also
+honestly reports what it CANNOT know: density is unidentifiable in a
+gravity+contact world (equivalence principle — dynamics are
+density-invariant), so it is marked `unidentifiable` and never published.
+
+Measured — 4 self-chosen experiments, R^2 = 1.0 on every fit:
+
+```
+[PLAN] drop_test (height=50, material=material_A) — gain 0.99
+  -> gravity = 9.80999, material_A.restitution = 0.720991
+[PLAN] drop_test (height=50, material=material_B) — gain 0.99
+  -> material_B.restitution = 0.454937
+[PLAN] slide_test (material=material_A, v0=20) — gain 0.98
+  -> material_A.friction = 0.400001
+[PLAN] slide_test (material=material_B, v0=20) — gain 0.98
+  -> material_B.friction = 0.250001
+unidentifiable: material_A.density, material_B.density
+```
+
+All values within 0.14% of the hidden ground truth. Knowledge persists in
+`knowledge/universe_002.json`: a second mission run concludes from
+civilization knowledge without re-running a single experiment.
+
+| Layer | Role / 角色 |
+|-------|------------|
+| `scientist.state.ScientistState` | self-model: uncertainty intervals + statuses / 自我认知：不确定度区间与状态 |
+| `scientist.information` | measurement resolution models / 测量分辨率模型 |
+| `scientist.designer.ExperimentDesigner` | chooses designs by information gain / 按信息增益选择实验 |
+| `scientist.experiments` | drop_test, slide_test registry / 实验库（可扩展） |
+
 ### Geology Module / 地质模块
 
 ```python
@@ -347,6 +400,7 @@ pytest -q                    # run all tests / 运行所有测试
 pytest tests/kernel/         # kernel tests only / 仅内核测试
 pytest tests/rules/          # rules tests only / 仅规则测试
 pytest tests/ai/             # AI tests only / 仅AI测试
+pytest tests/scientist/      # scientist missions / AI科学家任务
 pytest tests/geology/        # geology tests only / 仅地质测试
 pytest tests/viz/            # viz tests only / 仅渲染测试
 ```
@@ -366,7 +420,8 @@ pytest tests/viz/            # viz tests only / 仅渲染测试
 | **P7: Genesis-inspired Multi-Physics Engine** | **Done / 完成** | **4 pass (free-fall, collision, conservation, architecture)** |
 | **P8: AI Physics Discovery closed loop** | **Done / 完成** | **5 pass (gravity recovery, landing, safety)** |
 | **Mission 001: AI Scientist — Discover Gravity** | **Done / 完成** | **5 pass (discovery, persistence, consistency)** |
-| **Total** | | **198+ pass** |
+| **Mission 002: Autonomous Scientific Experimentation** | **Done / 完成** | **8 pass (designer, identifiability, discovery)** |
+| **Total** | | **206+ pass** |
 
 ### Terrain Evolution Viewer / 地形演化可视化器
 
