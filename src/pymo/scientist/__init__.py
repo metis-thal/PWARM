@@ -11,14 +11,20 @@ it can only propose experiments and observe their results.
 """
 
 from .agent import ScientistAgent
+from .designer import ExperimentDesigner, ExperimentProposal
 from .experiment import ExperimentSession, ExperimentSpec, Laboratory, ObservationRecord
+from .experiments import REGISTRY
 from .hypothesis import Hypothesis, Verification, fit_free_fall, verify
 from .knowledge import KnowledgeBase, LawRecord
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
+from .state import ScientistState
 
 __all__ = [
+    "REGISTRY",
+    "ExperimentDesigner",
     "ExperimentPlanner",
+    "ExperimentProposal",
     "ExperimentSession",
     "ExperimentSpec",
     "Hypothesis",
@@ -29,6 +35,7 @@ __all__ = [
     "MissionReport",
     "ObservationRecord",
     "ScientistAgent",
+    "ScientistState",
     "Verification",
     "fit_free_fall",
     "verify",

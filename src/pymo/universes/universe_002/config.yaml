@@ -1,0 +1,30 @@
+# Universe 002 — the AI scientist's first material world.
+#
+# Same rule as universe_001: values marked `hidden: true` are GROUND TRUTH,
+# loaded ONLY on the physics side (pymo.scientist.experiment.Laboratory).
+# The AI scientist sees the manifest (WHICH parameters exist) but never
+# their values — it must design experiments to earn them.
+#
+# Physical note: restitution and friction are real rigid-body contact
+# parameters this engine simulates. Density is declared but NOT identifiable
+# in a gravity+contact world (equivalence principle: without buoyancy or
+# drag, dynamics are density-invariant) — the scientist is expected to
+# discover that it CANNOT know density with the current apparatus.
+# Young's modulus needs a deformable-body solver (FEM) — future mission.
+
+name: Material World
+
+gravity:
+  hidden: true
+  value: 9.81
+
+materials:
+  hidden: true
+  material_A:
+    density: 7800        # steel-like (declared, unidentifiable — see note)
+    restitution: 0.72
+    friction: 0.4
+  material_B:
+    density: 2700        # aluminium-like
+    restitution: 0.45
+    friction: 0.25

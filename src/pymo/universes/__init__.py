@@ -13,7 +13,7 @@ Core rule enforced by construction:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -27,15 +27,22 @@ class UniverseSecrets:
 
     gravity: float | None = None
     air_density: float | None = None
+    materials: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class Universe:
-    """A world definition: public name + physics-only secrets + world rules."""
+    """A world definition: public name + physics-only secrets + world rules.
+
+    ``manifest`` lists WHICH hidden parameters exist (names only, no values)
+    — this is AI-visible: knowing what you don't know is the starting point
+    of the scientific method.
+    """
 
     name: str
     secrets: UniverseSecrets
     rules: dict
+    manifest: tuple[str, ...] = ()
 
     @property
     def id(self) -> str:
@@ -49,6 +56,24 @@ def _hidden_value(section: dict | None) -> float | None:
         return None
     value = section.get("value", section.get("density"))
     return None if value is None else float(value)
+
+
+def _parse_materials(config: dict, manifest: list[str]) -> dict[str, dict[str, float]]:
+    """Parse the materials section into {material: {prop: value}} and append
+    parameter NAMES (material.prop) to the manifest — names only, no values."""
+    section = config.get("materials")
+    if not isinstance(section, dict) or not section.get("hidden", False):
+        return {}
+    materials: dict[str, dict[str, float]] = {}
+    for mat_name, props in section.items():
+        if mat_name == "hidden" or not isinstance(props, dict):
+            continue
+        values: dict[str, float] = {}
+        for prop, value in props.items():
+            values[prop] = float(value)
+            manifest.append(f"{mat_name}.{prop}")
+        materials[str(mat_name)] = values
+    return materials
 
 
 def load_universe(universe_id: str) -> Universe:
@@ -66,12 +91,21 @@ def load_universe(universe_id: str) -> Universe:
         with rules_path.open("r", encoding="utf-8") as fh:
             rules = yaml.safe_load(fh) or {}
 
+    manifest: list[str] = []
+    if isinstance(config.get("gravity"), dict) and config["gravity"].get("hidden"):
+        manifest.append("gravity")
+    if isinstance(config.get("air"), dict) and config["air"].get("hidden"):
+        manifest.append("air.density")
+    materials = _parse_materials(config, manifest)
+
     secrets = UniverseSecrets(
         gravity=_hidden_value(config.get("gravity")),
         air_density=_hidden_value(config.get("air")),
+        materials=materials,
     )
     return Universe(
         name=str(config.get("name", universe_id)),
         secrets=secrets,
         rules=rules,
+        manifest=tuple(manifest),
     )
