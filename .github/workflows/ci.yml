@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install (core + dev)
+        run: pip install -e ".[core,dev]"
+
+      - name: Lint
+        run: ruff check src tests
+
+      - name: Unit + scientist tests
+        run: pytest tests/ -q
+
+      # Green here means more than "tests pass": the stranger test itself
+      # still runs — the AI discovers gravity in a plain terminal.
+      - name: Stranger test (pwarm demo 001)
+        run: python -m pymo.cli demo 001
+
+      - name: Mission 003 instrument arc smoke
+        run: python -m pymo.cli demo 003
+
+      # Reproducibility: a fresh scientist, deterministic physics, error
+      # below threshold — the scientific claims themselves are CI-checked.
+      - name: Reproducibility check (Mission 001)
+        run: |
+          bash reproducibility/mission_001/run.sh
+          pytest tests/test_reproducibility.py -q
