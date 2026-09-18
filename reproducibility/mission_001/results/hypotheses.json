@@ -1,0 +1,23 @@
+[
+  {
+    "claim": "gravity",
+    "value": 9.809992445100255,
+    "r2": 0.999999999999993,
+    "formula": "z(t) = 10 + -0.0817539*t + -4.905*t^2",
+    "experiment_id": "drop_h10_m1"
+  },
+  {
+    "claim": "gravity",
+    "value": 9.809993550265958,
+    "r2": 0.9999999999999939,
+    "formula": "z(t) = 20 + -0.0817515*t + -4.905*t^2",
+    "experiment_id": "drop_h20_m1"
+  },
+  {
+    "claim": "gravity",
+    "value": 9.809996049341766,
+    "r2": 0.9999999999999858,
+    "formula": "z(t) = 5 + -0.081752*t + -4.905*t^2",
+    "experiment_id": "drop_h5_m1"
+  }
+]

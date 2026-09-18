@@ -1,0 +1,23 @@
+# Mission 001 — Discover Gravity (reproduction envelope)
+mission: "001"
+universe: universe_001            # "Unknown Planet"
+
+hidden:                           # names only — values are physics-side secrets
+  - gravity
+
+observation_space:                # what the AI's measurement channel provides
+  - t: float   # time since release (s)
+  - z: float   # height (m)
+
+instruments:                      # what the AI may ask physics to execute
+  - drop rig (free fall from 5 / 10 / 20 m, sphere, mass 1.0)
+
+designer:                         # planner v1: three independent drop heights
+  drop_heights: [10.0, 20.0, 5.0]
+  mass: 1.0
+
+acceptance:
+  cross_experiment_rel_spread: 0.001
+  min_confidence: 0.999
+
+knowledge_policy: fresh           # every envelope run starts a new scientist

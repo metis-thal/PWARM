@@ -1,0 +1,10 @@
+{
+  "mission": "001",
+  "status": "DISCOVERED",
+  "experiments_run": 3,
+  "value": 9.80999401490266,
+  "unit": "m/s^2",
+  "confidence": 0.9999969262789308,
+  "knowledge_saved": true,
+  "summary": "3 independent experiments agree: 0.0000% spread"
+}

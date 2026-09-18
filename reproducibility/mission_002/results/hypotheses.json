@@ -1,0 +1,30 @@
+[
+  {
+    "claim": "material_A.restitution",
+    "value": 0.7253929181925626,
+    "r2": 0.9999999999999938,
+    "formula": "e = v_after/v_before = 10.1404/13.9792 (drop fit: z(t) = 10.000 + -0.0818*t + -4.90500*t^2)",
+    "experiment_id": "drop_test_material_A_h10"
+  },
+  {
+    "claim": "material_B.restitution",
+    "value": 0.4659633777790523,
+    "r2": 0.9999999999999938,
+    "formula": "e = v_after/v_before = 6.5138/13.9792 (drop fit: z(t) = 10.000 + -0.0818*t + -4.90500*t^2)",
+    "experiment_id": "drop_test_material_B_h10"
+  },
+  {
+    "claim": "material_A.friction",
+    "value": 0.4000009882941198,
+    "r2": 0.9999999999999452,
+    "formula": "v_x(t) = 10.0000 + -3.9240*t -> mu = 0.4000 (g = 9.8100)",
+    "experiment_id": "slide_test_material_A_v10"
+  },
+  {
+    "claim": "material_B.friction",
+    "value": 0.2500002363883506,
+    "r2": 0.9999999999979291,
+    "formula": "v_x(t) = 10.0000 + -2.4525*t -> mu = 0.2500 (g = 9.8100)",
+    "experiment_id": "slide_test_material_B_v10"
+  }
+]

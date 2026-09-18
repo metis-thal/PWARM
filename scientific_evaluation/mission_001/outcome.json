@@ -1,0 +1,36 @@
+{
+  "mission": "001",
+  "universe": "universe_001",
+  "ai_status": "DISCOVERED",
+  "experiments_run": 3,
+  "deterministic": true,
+  "seed": 0,
+  "claims": [
+    {
+      "claim": "gravity",
+      "measured": 9.809992,
+      "truth": 9.81,
+      "r2": 1.0,
+      "rel_error": 7.7e-07,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "gravity",
+      "measured": 9.809994,
+      "truth": 9.81,
+      "r2": 1.0,
+      "rel_error": 6.6e-07,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "gravity",
+      "measured": 9.809996,
+      "truth": 9.81,
+      "r2": 1.0,
+      "rel_error": 4e-07,
+      "status": "MATCHED"
+    }
+  ],
+  "verdict": "SUCCESS",
+  "headline": "g discovered at 0.0001% relative error from 3 self-planned drops"
+}

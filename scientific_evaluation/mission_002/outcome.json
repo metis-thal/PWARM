@@ -1,0 +1,59 @@
+{
+  "mission": "002",
+  "universe": "universe_002",
+  "ai_status": "DISCOVERED",
+  "experiments_run": 4,
+  "deterministic": true,
+  "seed": 0,
+  "claims": [
+    {
+      "claim": "material_A.restitution",
+      "measured": 0.725393,
+      "truth": 0.72,
+      "r2": 1.0,
+      "rel_error": 0.00749016,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "material_B.restitution",
+      "measured": 0.465963,
+      "truth": 0.45,
+      "r2": 1.0,
+      "rel_error": 0.03547417,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "material_A.friction",
+      "measured": 0.400001,
+      "truth": 0.4,
+      "r2": 1.0,
+      "rel_error": 2.47e-06,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "material_B.friction",
+      "measured": 0.25,
+      "truth": 0.25,
+      "r2": 1.0,
+      "rel_error": 9.5e-07,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "material_A.density",
+      "measured": null,
+      "truth": 7800.0,
+      "status": "UNIDENTIFIABLE",
+      "reason": "equivalence principle: no drop/slide observable depends on density"
+    },
+    {
+      "claim": "material_B.density",
+      "measured": null,
+      "truth": 2700.0,
+      "status": "UNIDENTIFIABLE",
+      "reason": "equivalence principle: no drop/slide observable depends on density"
+    }
+  ],
+  "verdict": "SUCCESS_WITH_HONEST_UNKNOWN",
+  "headline": "5/6 parameters identified; density honestly reported UNIDENTIFIABLE (equivalence principle) instead of guessed",
+  "note": "This honest failure is a FEATURE: Mission 003 closes exactly this gap."
+}

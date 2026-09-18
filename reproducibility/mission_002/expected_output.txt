@@ -1,0 +1,39 @@
+
+======================================================================
+   PWARM MISSION 002 — MATERIAL PROPERTIES
+======================================================================
+
+Universe: Material World
+Hidden per material: density, restitution, friction  (the AI is not told)
+
+AI Scientist (information-gain designer)
+    ↓
+ScientistState — self model
+  known (5):
+    gravity = 9.80999
+    material_A.restitution = 0.725393
+    material_A.friction = 0.400001
+    material_B.restitution = 0.465963
+    material_B.friction = 0.25
+  unidentifiable with current apparatus (2):
+    material_A.density — no available experiment informs this parameter (identifiability limit of the current apparatus)
+    material_B.density — no available experiment informs this parameter (identifiability limit of the current apparatus)
+
+experiment proposals:
+  1. reduce gravity uncertainty: value 0.65 = gain 0.98 / cost 1.5 (height=10, material=material_A — best of 8 candidate designs)
+  2. reduce material_B.restitution uncertainty: value 0.65 = gain 0.98 / cost 1.5 (height=10, material=material_B — best of 12 candidate designs)
+  3. reduce material_A.friction uncertainty: value 0.65 = gain 0.98 / cost 1.5 (material=material_A, v0=10 — best of 8 candidate designs)
+  4. reduce material_B.friction uncertainty: value 0.65 = gain 0.98 / cost 1.5 (material=material_B, v0=10 — best of 4 candidate designs)
+
+======================================================================
+   DISCOVERY CONFIRMED
+======================================================================
+    drop_test_material_A_h10:  material_A.restitution = 0.7254   (R^2 = 1.0000)
+    drop_test_material_B_h10:  material_B.restitution = 0.4660   (R^2 = 1.0000)
+    slide_test_material_A_v10:  material_A.friction = 0.4000   (R^2 = 1.0000)
+    slide_test_material_B_v10:  material_B.friction = 0.2500   (R^2 = 1.0000)
+
+Honest metacognition (the scientist does not guess):
+    unidentifiable with current apparatus (2):
+
+[artifacts] AI-side results written to reproducibility\mission_002\results  (observations / hypotheses / report — no universe secrets)

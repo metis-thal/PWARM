@@ -1,0 +1,29 @@
+# Mission 002 — Autonomous Material Discovery (reproduction envelope)
+mission: "002"
+universe: universe_002            # "Material World"
+
+hidden:                           # names only — values are physics-side secrets
+  - gravity
+  - material_A.{density,restitution,friction}
+  - material_B.{density,restitution,friction}
+
+observation_space:
+  - t, z (drop tests: free-fall + rebound apex)
+  - t, z, vx (slide tests: Coulomb deceleration)
+
+instruments:
+  - drop rig   (heights 5/10/20/50 m)
+  - slide rig  (launch speeds 2/5/10/20 m/s)   # requires gravity first (mu = -slope/g)
+
+designer:
+  doctrine: value = expected_utility / cost   # Mission 003 economics, see docs
+  knowledge_threshold_rel_width: 0.05
+
+acceptance:
+  min_gain: 0.05
+
+knowledge_policy: fresh
+
+expected_honest_outcome:          # recorded, not hidden (see scientific_evaluation/)
+  - material_A.density UNIDENTIFIABLE      # equivalence principle
+  - material_B.density UNIDENTIFIABLE

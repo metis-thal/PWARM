@@ -1,0 +1,47 @@
+
+======================================================================
+   PWARM MISSION 003 — SCIENCE UNDER CONSTRAINTS
+======================================================================
+
+Universe: Constrained World
+Budget: 4 experiments / 1400 steps / 12 cost units   (a constraint, not a secret)
+
+AI Scientist (value = information / cost designer)
+    ↓
+ScientistState — self model
+  known (7):
+    gravity = 9.79
+    material_A.density = 7799.95
+    material_A.restitution = 0.725178
+    material_A.friction = 0.4
+    material_B.density = 2700
+    material_B.restitution = 0.465629
+    material_B.friction = 0.249999
+
+budget:
+  experiments [##########] 6/6
+  steps       [####......] 825/1900
+  cost        [####......] 8.5/20.0
+
+instrument arc:
+  requested fluid_tank (fluid_immersion) -> GRANTED; unlocks buoyancy_test for material_A.density, material_B.density
+
+experiment proposals:
+  1. reduce gravity uncertainty: value 0.65 = gain 0.98 / cost 1.5 (height=10, material=material_A — best of 8 affordable designs; budget 0/4 experiments, 0.0/12.0 cost)
+  2. reduce material_B.restitution uncertainty: value 0.65 = gain 0.98 / cost 1.5 (height=10, material=material_B — best of 12 affordable designs; budget 1/4 experiments, 1.5/12.0 cost)
+  3. reduce material_A.friction uncertainty: value 0.65 = gain 0.98 / cost 1.5 (material=material_A, v0=10 — best of 8 affordable designs; budget 2/4 experiments, 3.0/12.0 cost)
+  4. reduce material_B.friction uncertainty: value 0.65 = gain 0.98 / cost 1.5 (material=material_B, v0=10 — best of 4 affordable designs; budget 3/4 experiments, 4.5/12.0 cost)
+  5. reduce material_A.density uncertainty: value 0.78 = gain 0.98 / cost 1.2 (depth=1, material=material_A — best of 6 affordable designs; budget 4/6 experiments, 6.0/20.0 cost)
+  6. reduce material_B.density uncertainty: value 0.78 = gain 0.98 / cost 1.2 (depth=1, material=material_B — best of 3 affordable designs; budget 5/6 experiments, 7.2/20.0 cost)
+
+======================================================================
+   DISCOVERY CONFIRMED
+======================================================================
+    drop_test_material_A_h10:  material_A.restitution = 0.7252   (R^2 = 1.0000)
+    drop_test_material_B_h10:  material_B.restitution = 0.4656   (R^2 = 1.0000)
+    slide_test_material_A_v10:  material_A.friction = 0.4000   (R^2 = 1.0000)
+    slide_test_material_B_v10:  material_B.friction = 0.2500   (R^2 = 1.0000)
+    buoyancy_test_material_A_d1:  material_A.density = 7799.9531   (R^2 = 1.0000)
+    buoyancy_test_material_B_d1:  material_B.density = 2699.9967   (R^2 = 1.0000)
+
+[artifacts] AI-side results written to reproducibility\mission_003\results  (observations / hypotheses / report — no universe secrets)

@@ -1,0 +1,44 @@
+[
+  {
+    "claim": "material_A.restitution",
+    "value": 0.7251781969639333,
+    "r2": 0.9999999999999833,
+    "formula": "e = v_after/v_before = 10.1168/13.9508 (drop fit: z(t) = 10.000 + -0.0816*t + -4.89500*t^2)",
+    "experiment_id": "drop_test_material_A_h10"
+  },
+  {
+    "claim": "material_B.restitution",
+    "value": 0.46562911039378463,
+    "r2": 0.9999999999999833,
+    "formula": "e = v_after/v_before = 6.4959/13.9508 (drop fit: z(t) = 10.000 + -0.0816*t + -4.89500*t^2)",
+    "experiment_id": "drop_test_material_B_h10"
+  },
+  {
+    "claim": "material_A.friction",
+    "value": 0.39999952520341536,
+    "r2": 0.9999999999999974,
+    "formula": "v_x(t) = 10.0000 + -3.9160*t -> mu = 0.4000 (g = 9.7900)",
+    "experiment_id": "slide_test_material_A_v10"
+  },
+  {
+    "claim": "material_B.friction",
+    "value": 0.24999940987973054,
+    "r2": 0.9999999999987228,
+    "formula": "v_x(t) = 10.0000 + -2.4475*t -> mu = 0.2500 (g = 9.7900)",
+    "experiment_id": "slide_test_material_B_v10"
+  },
+  {
+    "claim": "material_A.density",
+    "value": 7799.953053632641,
+    "r2": 0.9999999999999845,
+    "formula": "a_submerged = 8.5349 m/s^2 -> rho = rho_f*g/(g-a) = 7800.0 kg/m^3 (rho_f = 1000, g = 9.7900)",
+    "experiment_id": "buoyancy_test_material_A_d1"
+  },
+  {
+    "claim": "material_B.density",
+    "value": 2699.996691707432,
+    "r2": 0.9999999999999952,
+    "formula": "a_submerged = 6.1641 m/s^2 -> rho = rho_f*g/(g-a) = 2700.0 kg/m^3 (rho_f = 1000, g = 9.7900)",
+    "experiment_id": "buoyancy_test_material_B_d1"
+  }
+]

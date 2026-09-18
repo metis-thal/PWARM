@@ -1,0 +1,33 @@
+# Mission 003 — Science Under Constraints (reproduction envelope)
+mission: "003"
+universe: universe_003            # "Constrained World"
+
+hidden:                           # names only — values are physics-side secrets
+  - gravity                       # 9.79 (deliberately different from 001/002)
+  - material_A.{density,restitution,friction}
+  - material_B.{density,restitution,friction}
+
+budget:                           # a CONSTRAINT, AI-visible; not a secret
+  experiments: 4
+  simulation_steps: 1400
+  compute_cost: 12.0
+
+instruments:
+  - drop rig   (heights 5/10/20/50 m)
+  - slide rig  (launch speeds 2/5/10/20 m/s)
+  - fluid_tank:                     # LOCKED until the scientist requests it
+      capability: fluid_immersion
+      enables: buoyancy_test
+      grant_budget: {experiments: 2, simulation_steps: 500, compute_cost: 8.0}
+
+designer:
+  doctrine: value = expected_utility / cost
+  knowledge_threshold_rel_width: 0.05
+
+instrument_arc:                   # the payoff chain this envelope must show
+  - density UNIDENTIFIABLE under drop/slide apparatus
+  - gap analysis -> instrument request (fluid_tank, fluid_immersion)
+  - grant -> budget extension -> buoyancy_test unlocked
+  - density identified via F = rho_fluid * g * V
+
+knowledge_policy: fresh

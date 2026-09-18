@@ -1,0 +1,10 @@
+{
+  "mission": "003",
+  "status": "DISCOVERED",
+  "experiments_run": 6,
+  "value": null,
+  "unit": "",
+  "confidence": 0.9575662856932079,
+  "knowledge_saved": true,
+  "summary": "ScientistState \u2014 self model\n  known (7):\n    gravity = 9.79\n    material_A.density = 7799.95\n    material_A.restitution = 0.725178\n    material_A.friction = 0.4\n    material_B.density = 2700\n    material_B.restitution = 0.465629\n    material_B.friction = 0.249999\n\nbudget:\n  experiments [##########] 6/6\n  steps       [####......] 825/1900\n  cost        [####......] 8.5/20.0\n\ninstrument arc:\n  requested fluid_tank (fluid_immersion) -> GRANTED; unlocks buoyancy_test for material_A.density, material_B.density\n\nexperiment proposals:\n  1. reduce gravity uncertainty: value 0.65 = gain 0.98 / cost 1.5 (height=10, material=material_A \u2014 best of 8 affordable designs; budget 0/4 experiments, 0.0/12.0 cost)\n  2. reduce material_B.restitution uncertainty: value 0.65 = gain 0.98 / cost 1.5 (height=10, material=material_B \u2014 best of 12 affordable designs; budget 1/4 experiments, 1.5/12.0 cost)\n  3. reduce material_A.friction uncertainty: value 0.65 = gain 0.98 / cost 1.5 (material=material_A, v0=10 \u2014 best of 8 affordable designs; budget 2/4 experiments, 3.0/12.0 cost)\n  4. reduce material_B.friction uncertainty: value 0.65 = gain 0.98 / cost 1.5 (material=material_B, v0=10 \u2014 best of 4 affordable designs; budget 3/4 experiments, 4.5/12.0 cost)\n  5. reduce material_A.density uncertainty: value 0.78 = gain 0.98 / cost 1.2 (depth=1, material=material_A \u2014 best of 6 affordable designs; budget 4/6 experiments, 6.0/20.0 cost)\n  6. reduce material_B.density uncertainty: value 0.78 = gain 0.98 / cost 1.2 (depth=1, material=material_B \u2014 best of 3 affordable designs; budget 5/6 experiments, 7.2/20.0 cost)"
+}

@@ -1,0 +1,67 @@
+{
+  "mission": "003",
+  "universe": "universe_003",
+  "ai_status": "DISCOVERED",
+  "experiments_run": 6,
+  "deterministic": true,
+  "seed": 0,
+  "claims": [
+    {
+      "claim": "material_A.restitution",
+      "measured": 0.725178,
+      "truth": 0.72,
+      "r2": 1.0,
+      "rel_error": 0.00719194,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "material_B.restitution",
+      "measured": 0.465629,
+      "truth": 0.45,
+      "r2": 1.0,
+      "rel_error": 0.03473136,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "material_A.friction",
+      "measured": 0.4,
+      "truth": 0.4,
+      "r2": 1.0,
+      "rel_error": 1.19e-06,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "material_B.friction",
+      "measured": 0.249999,
+      "truth": 0.25,
+      "r2": 1.0,
+      "rel_error": 2.36e-06,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "material_A.density",
+      "measured": 7799.953054,
+      "truth": 7800.0,
+      "r2": 1.0,
+      "rel_error": 6.02e-06,
+      "status": "MATCHED"
+    },
+    {
+      "claim": "material_B.density",
+      "measured": 2699.996692,
+      "truth": 2700.0,
+      "r2": 1.0,
+      "rel_error": 1.23e-06,
+      "status": "MATCHED"
+    }
+  ],
+  "verdict": "SUCCESS",
+  "headline": "7/7 parameters identified within budget via the instrument arc",
+  "instrument_arc": [
+    "density UNIDENTIFIABLE under drop/slide apparatus (4 experiments spent)",
+    "gap analysis: need fluid_immersion capability",
+    "instrument request filed: fluid_tank",
+    "grant: buoyancy_test unlocked; budget extended (+2 exp / +500 steps / +8 cost)",
+    "buoyancy_test identifies both densities (F = rho_fluid * g * V)"
+  ]
+}

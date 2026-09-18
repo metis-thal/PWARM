@@ -1,0 +1,4 @@
+seed = 0 (numpy, fixed by the CLI)
+note = the AI<->physics loop is fully deterministic (no RNG anywhere in
+       the scientist/ or universes/ paths); the seed is belt-and-braces
+       so future stochastic backends cannot silently break envelopes.

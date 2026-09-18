@@ -1,0 +1,10 @@
+{
+  "mission": "002",
+  "status": "DISCOVERED",
+  "experiments_run": 4,
+  "value": null,
+  "unit": "",
+  "confidence": 0.9587867965644035,
+  "knowledge_saved": true,
+  "summary": "ScientistState \u2014 self model\n  known (5):\n    gravity = 9.80999\n    material_A.restitution = 0.725393\n    material_A.friction = 0.400001\n    material_B.restitution = 0.465963\n    material_B.friction = 0.25\n  unidentifiable with current apparatus (2):\n    material_A.density \u2014 no available experiment informs this parameter (identifiability limit of the current apparatus)\n    material_B.density \u2014 no available experiment informs this parameter (identifiability limit of the current apparatus)\n\nexperiment proposals:\n  1. reduce gravity uncertainty: value 0.65 = gain 0.98 / cost 1.5 (height=10, material=material_A \u2014 best of 8 candidate designs)\n  2. reduce material_B.restitution uncertainty: value 0.65 = gain 0.98 / cost 1.5 (height=10, material=material_B \u2014 best of 12 candidate designs)\n  3. reduce material_A.friction uncertainty: value 0.65 = gain 0.98 / cost 1.5 (material=material_A, v0=10 \u2014 best of 8 candidate designs)\n  4. reduce material_B.friction uncertainty: value 0.65 = gain 0.98 / cost 1.5 (material=material_B, v0=10 \u2014 best of 4 candidate designs)"
+}
