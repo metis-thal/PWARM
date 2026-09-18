@@ -5,7 +5,8 @@ Genesis-style pairwise coupling with Gauss-Seidel iterations.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -13,7 +14,7 @@ import numpy as np
 if TYPE_CHECKING:
     from ..core.scene import Scene
     from ..core.state import State
-    from ..solvers.base import Solver, CouplingData
+    from ..solvers.base import CouplingData
 
 
 @dataclass
@@ -109,7 +110,7 @@ class Coupler:
     
     def _compute_interactions(self, coupling_data: dict[str, CouplingData], dt: float) -> dict[str, dict[str, np.ndarray]]:
         """Compute pairwise interaction forces. Returns {solver_name: {target_name: force_array}}."""
-        interactions = {name: {} for name in coupling_data.keys()}
+        interactions = {name: {} for name in coupling_data}
         
         # Rigid ↔ SPH (fluid-structure interaction)
         if self.enabled.get(("rigid", "sph"), False):
@@ -156,23 +157,18 @@ class Coupler:
         # Rigid body boundary particles exert forces on SPH particles
         # Buoyancy: Archimedes principle
         # Drag: Stokes or quadratic drag
-        pass
     
     def _rigid_fem_interaction(self, coupling_data, interactions, dt):
         """Rigid-deformable contact via penalty or Lagrange multipliers."""
-        pass
     
     def _rigid_mpm_interaction(self, coupling_data, interactions, dt):
         """Rigid-MPM contact. MPM particles collide with rigid boundary."""
-        pass
     
     def _rigid_pbd_interaction(self, coupling_data, interactions, dt):
         """Rigid-PBD contact. PBD particles constrained by rigid surfaces."""
-        pass
     
     def _sph_fem_interaction(self, coupling_data, interactions, dt):
         """SPH fluid pressure loads on FEM surface."""
-        pass
     
     def _thermal_interactions(self, coupling_data, interactions, dt):
         """Heat conduction across material interfaces."""
@@ -188,11 +184,9 @@ class Coupler:
     
     def _chemistry_sph_interaction(self, coupling_data, interactions, dt):
         """Species advection-diffusion in SPH flow."""
-        pass
     
     def _geology_thermal_interaction(self, coupling_data, interactions, dt):
         """Crustal heat flow, radiogenic heating, surface cooling."""
-        pass
 
 
 def create_coupler(scene: Scene, **kwargs) -> Coupler:

@@ -11,53 +11,76 @@ Architecture (Genesis-inspired):
 - Interface: URDF/MJCF/GLTF parsers, GUI, Sensors, Parallel environments
 """
 
-from .core import (
-    Scene, State, GlobalQuantities,
-    Entity, EntityID, ComponentMask, EntityManager,
-    TransformComponent, RigidBodyComponent, SPHParticleComponent,
-    FEMNodeComponent, MPMParticleComponent, PBDParticleComponent,
-    ThermalComponent, ChemistryComponent, GeologyComponent,
-    CollisionShapeComponent,
-)
-
-from .solvers import Solver, CouplingData
-
-from .coupling import Coupler, CouplerOptions, create_coupler
-
-from .collision import (
-    Contact, ContactList, AABB,
-    SAPBroadPhase, GJKNarrowPhase, ConservativeCCD, CollisionSystem,
-)
-
-from .integrator import (
-    TimeStepper, TimeStepperOptions, VelocityVerletIntegrator,
-    SymplecticEulerIntegrator, ImplicitEulerIntegrator, create_time_stepper,
-)
-
-from ..interface import (
-    load_urdf, load_mjcf, load_gltf, parse_urdf, parse_mjcf, parse_gltf,
-    GUI, CameraConfig, CameraSensor, ForceSensor, SensorData, SensorType,
-    ParallelEnv, EnvConfig, VectorizedEnv,
-)
+# WorldEngineConfig defined locally
+from dataclasses import dataclass, field
 
 import numpy as np
 
-# WorldEngineConfig defined locally
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .core.scene import Scene
-    from .core.state import State
+from ..interface import (
+    GUI,
+    CameraConfig,
+    CameraSensor,
+    EnvConfig,
+    ForceSensor,
+    ParallelEnv,
+    SensorData,
+    SensorType,
+    VectorizedEnv,
+    load_gltf,
+    load_mjcf,
+    load_urdf,
+    parse_gltf,
+    parse_mjcf,
+    parse_urdf,
+)
 
 # AI Layer imports
 from .ai import (
-    WorldObserver,
-    TimeSeriesDataset,
     Observation,
-    create_free_fall_experiment,
+    TimeSeriesDataset,
+    WorldObserver,
     create_collision_experiment,
+    create_free_fall_experiment,
 )
+from .collision import (
+    AABB,
+    CollisionSystem,
+    ConservativeCCD,
+    Contact,
+    ContactList,
+    GJKNarrowPhase,
+    SAPBroadPhase,
+)
+from .core import (
+    ChemistryComponent,
+    CollisionShapeComponent,
+    ComponentMask,
+    Entity,
+    EntityID,
+    EntityManager,
+    FEMNodeComponent,
+    GeologyComponent,
+    GlobalQuantities,
+    MPMParticleComponent,
+    PBDParticleComponent,
+    RigidBodyComponent,
+    Scene,
+    SPHParticleComponent,
+    State,
+    ThermalComponent,
+    TransformComponent,
+)
+from .coupling import Coupler, CouplerOptions, create_coupler
+from .integrator import (
+    ImplicitEulerIntegrator,
+    SymplecticEulerIntegrator,
+    TimeStepper,
+    TimeStepperOptions,
+    VelocityVerletIntegrator,
+    create_time_stepper,
+)
+from .solvers import CouplingData, Solver
+
 
 @dataclass
 class WorldEngineConfig:
@@ -109,13 +132,9 @@ class WorldEngine:
         self._needs_state_rebuild = False
         
         # Import here to avoid circular imports
-        from .core.scene import Scene
-        from .core.entity import EntityManager, ComponentMask
-        from .core.component import (
-            TransformComponent, RigidBodyComponent, CollisionShapeComponent
-        )
-        from .coupling import Coupler, CouplerOptions
         from .collision import CollisionSystem
+        from .core.scene import Scene
+        from .coupling import Coupler, CouplerOptions
         from .integrator import TimeStepper, TimeStepperOptions
         
         # Build scene
@@ -128,8 +147,16 @@ class WorldEngine:
         self.scene.checkpoint_path = config.checkpoint_path
         
         # Register enabled solvers
-        from .solvers import RigidSolver, SPHSolver, FEMSolver, MPMSolver, PBDSolver
-        from .solvers import ThermalSolver, ChemistrySolver, GeologySolver
+        from .solvers import (
+            ChemistrySolver,
+            FEMSolver,
+            GeologySolver,
+            MPMSolver,
+            PBDSolver,
+            RigidSolver,
+            SPHSolver,
+            ThermalSolver,
+        )
         
         solver_map = {
             "rigid": (config.rigid.get("enabled", True), RigidSolver),
@@ -174,7 +201,7 @@ class WorldEngine:
         
         # AI layer
         if config.enable_ai:
-            from .ai import WorldObserver, LawDiscovery, ClosedLoopAI
+            from .ai import ClosedLoopAI, LawDiscovery, WorldObserver
             self.observer = WorldObserver(self.scene)
             self.law_discovery = LawDiscovery()
             self.closed_loop_ai = ClosedLoopAI()
@@ -189,10 +216,8 @@ class WorldEngine:
                           shape: str = "sphere",
                           shape_params: dict | None = None):
         """Convenience: create rigid body entity."""
-        from .core.entity import Entity, EntityID, ComponentMask
-        from .core.component import (
-            TransformComponent, RigidBodyComponent, CollisionShapeComponent
-        )
+        from .core.component import CollisionShapeComponent, RigidBodyComponent, TransformComponent
+        from .core.entity import ComponentMask, Entity, EntityID
         
         entity = Entity(id=EntityID(), name=f"rigid_{len(self.scene.entities)}")
         entity.mask = ComponentMask.RIGID_DYNAMIC if mass > 0 else ComponentMask.RIGID_STATIC
@@ -263,8 +288,8 @@ class WorldEngine:
         (rest density, zero pressure). For a different lattice spacing,
         pass mass = rest_density / (per-particle kernel sum) explicitly.
         """
-        from .core.entity import Entity, EntityID, ComponentMask
         from .core.component import SPHParticleComponent, TransformComponent
+        from .core.entity import ComponentMask, Entity, EntityID
 
         positions = np.asarray(positions, dtype=np.float32)
         n = len(positions)
@@ -322,32 +347,72 @@ class WorldEngine:
 
 
 __all__ = [
-    # Core
-    "Scene", "State", "GlobalQuantities",
-    "Entity", "EntityID", "ComponentMask", "EntityManager",
-    "TransformComponent", "RigidBodyComponent", "SPHParticleComponent",
-    "FEMNodeComponent", "MPMParticleComponent", "PBDParticleComponent",
-    "ThermalComponent", "ChemistryComponent", "GeologyComponent",
+    "AABB",
+    "GUI",
+    "CameraConfig",
+    "CameraSensor",
+    "ChemistryComponent",
     "CollisionShapeComponent",
-    # Solvers
-    "Solver", "CouplingData",
-    # Coupling
-    "Coupler", "CouplerOptions", "create_coupler",
+    "CollisionSystem",
+    "ComponentMask",
+    "ConservativeCCD",
     # Collision
-    "Contact", "ContactList", "AABB",
-    "SAPBroadPhase", "GJKNarrowPhase", "ConservativeCCD", "CollisionSystem",
+    "Contact",
+    "ContactList",
+    # Coupling
+    "Coupler",
+    "CouplerOptions",
+    "CouplingData",
+    "Entity",
+    "EntityID",
+    "EntityManager",
+    "EnvConfig",
+    "FEMNodeComponent",
+    "ForceSensor",
+    "GJKNarrowPhase",
+    "GeologyComponent",
+    "GlobalQuantities",
+    "ImplicitEulerIntegrator",
+    "MPMParticleComponent",
+    "Observation",
+    "PBDParticleComponent",
+    "ParallelEnv",
+    "RigidBodyComponent",
+    "SAPBroadPhase",
+    "SPHParticleComponent",
+    # Core
+    "Scene",
+    "SensorData",
+    "SensorType",
+    # Solvers
+    "Solver",
+    "State",
+    "SymplecticEulerIntegrator",
+    "ThermalComponent",
+    "TimeSeriesDataset",
     # Integrator
-    "TimeStepper", "TimeStepperOptions", "VelocityVerletIntegrator",
-    "SymplecticEulerIntegrator", "ImplicitEulerIntegrator", "create_time_stepper",
-    # Interface
-    "load_urdf", "load_mjcf", "load_gltf", "parse_urdf", "parse_mjcf", "parse_gltf",
-    "GUI", "CameraConfig", "CameraSensor", "ForceSensor", "SensorData", "SensorType",
-    "ParallelEnv", "EnvConfig", "VectorizedEnv",
+    "TimeStepper",
+    "TimeStepperOptions",
+    "TransformComponent",
+    "VectorizedEnv",
+    "VelocityVerletIntegrator",
     # WorldEngine
-    "WorldEngine", "WorldEngineConfig", "create_world_engine",
+    "WorldEngine",
+    "WorldEngineConfig",
     # AI Layer
-    "WorldObserver", "TimeSeriesDataset", "Observation",
-    "create_free_fall_experiment", "create_collision_experiment",
+    "WorldObserver",
+    "create_collision_experiment",
+    "create_coupler",
+    "create_free_fall_experiment",
+    "create_time_stepper",
+    "create_world_engine",
+    "load_gltf",
+    "load_mjcf",
+    # Interface
+    "load_urdf",
+    "parse_gltf",
+    "parse_mjcf",
+    "parse_urdf",
 ]
 
 # Version

@@ -55,8 +55,7 @@ def _make_solve_contacts_velocity():
                     continue  # separating
 
                 j = -(1.0 + rest[c]) * vn / isum
-                if j < 0.0:
-                    j = 0.0
+                j = max(j, 0.0)
 
                 # Normal impulse
                 linvel[ia, 0] -= nx * j * ima
@@ -75,8 +74,7 @@ def _make_solve_contacts_velocity():
                     if tlen > 1e-6:
                         jt = tlen / isum
                         jt_max = fric[c] * j
-                        if jt > jt_max:
-                            jt = jt_max
+                        jt = min(jt, jt_max)
                         tx /= tlen
                         ty /= tlen
                         tz /= tlen

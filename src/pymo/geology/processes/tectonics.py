@@ -11,7 +11,9 @@ Uplift rate varies spatially based on:
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
+
 import numpy as np
 
 
@@ -47,13 +49,13 @@ def generate_uplift_field(
 
     Returns uplift_rate: (nx*ny,) in m/yr
     """
-    n = nx * ny
+    nx * ny
     rng = np.random.default_rng(seed)
 
     # Create coordinate grids
     x = np.linspace(0, 1, nx, dtype=np.float32)
     y = np.linspace(0, 1, ny, dtype=np.float32)
-    xx, yy = np.meshgrid(x, y)  # (ny, nx)
+    xx, _yy = np.meshgrid(x, y)  # (ny, nx)
 
     # Distance from collision front (along x-axis)
     front_x = config.front_position
@@ -95,7 +97,7 @@ def apply_tectonic_uplift(
         uplift_amount: (N,) meters of material added (positive = uplift)
         new_uplift_rates: (N,) actual uplift rates used (m/yr)
     """
-    n = nx * ny
+    nx * ny
 
     if uplift_field is None:
         uplift_field = generate_uplift_field(nx, ny, config)

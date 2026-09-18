@@ -8,12 +8,16 @@ Uses implicit (backward Euler) time stepping for unconditional stability.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
+
 import numpy as np
-from scipy.sparse import csr_matrix, diags
+from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
 
-from ..rock_materials import RockMaterial, get_rock_by_id, rock_count, get_thermal_conductivity_array, get_melting_point_array
+from ..rock_materials import (
+    RockMaterial,
+)
 
 
 @dataclass(slots=True)
@@ -57,21 +61,21 @@ def build_thermal_matrices(
     # L[i,i] = sum(k_face/h²) over 6 neighbors
     # L[i,j] = -k_face/h² for neighbor j
 
-    main_diag = np.ones(n, dtype=np.float32)
-    off_diag_x = np.zeros(n, dtype=np.float32)  # i+1 neighbor
-    off_diag_y = np.zeros(n, dtype=np.float32)  # i+nx neighbor
-    off_diag_z = np.zeros(n, dtype=np.float32)  # i+nx*ny neighbor
+    np.ones(n, dtype=np.float32)
+    np.zeros(n, dtype=np.float32)  # i+1 neighbor
+    np.zeros(n, dtype=np.float32)  # i+nx neighbor
+    np.zeros(n, dtype=np.float32)  # i+nx*ny neighbor
 
     # Compute face conductivities (harmonic mean between adjacent cells)
     # X-faces
-    k_x = np.zeros(n - nx * ny * (nz - 1), dtype=np.float32)  # all x-faces
+    np.zeros(n - nx * ny * (nz - 1), dtype=np.float32)  # all x-faces
     # Actually simpler: just compute on the fly per direction
 
     # We'll build using scipy.sparse.diags for structured grid
     # For variable coefficients, need to be careful with boundaries
 
     # X-direction connections
-    k_xp = 0.5 * (rock_k[:-1] + rock_k[1:])  # between i and i+1 (where contiguous)
+    0.5 * (rock_k[:-1] + rock_k[1:])  # between i and i+1 (where contiguous)
     # But need to handle nx boundaries...
     # Let's use a more direct approach with explicit indexing
 
@@ -93,7 +97,7 @@ def build_thermal_matrices(
                 rho_c_i = rho_c[i]
 
                 diag_val = 1.0  # Identity
-                source = dt * radiogenic_heat / rho_c_i  # will be added to b
+                dt * radiogenic_heat / rho_c_i  # will be added to b
 
                 # X neighbors
                 if ix > 0:
@@ -158,7 +162,7 @@ def solve_thermal_step(
     Modifies grid.temperature in place.
     """
     nx, ny, nz = grid.nx, grid.ny, grid.nz
-    n = nx * ny * nz
+    nx * ny * nz
 
     # Get material properties per cell
     rock_ids = grid.rock_id
@@ -323,7 +327,8 @@ def solve_steady_state(
 # Utility: create rock_materials dict from library
 # ============================================================
 
-from ..rock_materials import all_rocks, get_rock_by_id
+from ..rock_materials import all_rocks
+
 
 def get_material_dict() -> dict[int, RockMaterial]:
     return {r.rock_id: r for r in all_rocks()}

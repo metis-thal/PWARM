@@ -14,7 +14,9 @@ and destruction.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
+
 import numpy as np
 
 
@@ -43,7 +45,7 @@ def compute_drainage_area(
     area = np.full(n, cell_size * cell_size, dtype=np.float32)  # each cell starts with its own area
 
     # Sort cells by elevation (highest first) for priority-flood
-    elev_2d = elevation.reshape(ny, nx)
+    elevation.reshape(ny, nx)
     sorted_indices = np.argsort(-elevation)  # descending
 
     # D8 neighbor offsets (8-connected)
@@ -147,7 +149,7 @@ def apply_stream_power_erosion(
     Returns:
         erosion_amount: (N,) meters of material removed (positive = erosion)
     """
-    n = nx * ny
+    nx * ny
 
     # Compute drainage area and slope
     area = compute_drainage_area(elevation, nx, ny, cell_size)

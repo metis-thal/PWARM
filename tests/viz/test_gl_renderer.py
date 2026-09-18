@@ -1,18 +1,16 @@
 """Tests for GLRenderer mesh generation and shader compilation."""
 
 import numpy as np
-import pytest
 
 from pymo.viz.gl_renderer import (
     FrustumPlanes,
-    RendererConfig,
     GLRenderer,
+    RendererConfig,
     _make_box_mesh,
     _make_cylinder_mesh,
     _make_sphere_mesh,
 )
-from pymo.viz.snapshot import CameraState, DoubleBuffer, MeshType, SceneSnapshot
-
+from pymo.viz.snapshot import CameraState, DoubleBuffer
 
 # ---------------------------------------------------------------------------
 # Mesh generation tests (pure CPU, no GPU)
@@ -20,7 +18,7 @@ from pymo.viz.snapshot import CameraState, DoubleBuffer, MeshType, SceneSnapshot
 
 class TestSphereMesh:
     def test_vertex_count(self):
-        verts, norms, idx = _make_sphere_mesh(1.0, 16, 12)
+        verts, norms, _idx = _make_sphere_mesh(1.0, 16, 12)
         assert verts.shape[1] == 3
         assert norms.shape[1] == 3
         assert len(verts) == len(norms)
@@ -36,7 +34,7 @@ class TestSphereMesh:
         np.testing.assert_allclose(lengths, 1.0, atol=1e-5)
 
     def test_index_count(self):
-        verts, _, idx = _make_sphere_mesh(1.0, 16, 12)
+        _verts, _, idx = _make_sphere_mesh(1.0, 16, 12)
         # Triangles: stacks * sectors * 2 * 3
         expected = 12 * 16 * 2 * 3
         assert len(idx) == expected
@@ -44,12 +42,12 @@ class TestSphereMesh:
 
 class TestBoxMesh:
     def test_vertex_count(self):
-        verts, norms, idx = _make_box_mesh(1.0, 1.0, 1.0)
+        verts, norms, _idx = _make_box_mesh(1.0, 1.0, 1.0)
         assert len(verts) == 24  # 6 faces * 4 vertices
         assert len(norms) == 24
 
     def test_face_count(self):
-        verts, _, idx = _make_box_mesh(1.0, 1.0, 1.0)
+        _verts, _, idx = _make_box_mesh(1.0, 1.0, 1.0)
         # 6 faces * 2 triangles * 3 indices
         assert len(idx) == 36
 
@@ -62,7 +60,7 @@ class TestBoxMesh:
 
 class TestCylinderMesh:
     def test_vertex_count(self):
-        verts, norms, idx = _make_cylinder_mesh(1.0, 1.0, 16)
+        verts, _norms, _idx = _make_cylinder_mesh(1.0, 1.0, 16)
         # Side: (segments+1)*2 + 2 cap centers
         expected_side = (16 + 1) * 2
         assert len(verts) == expected_side + 2
@@ -74,7 +72,7 @@ class TestCylinderMesh:
         np.testing.assert_allclose(lengths, 1.0, atol=1e-5)
 
     def test_cap_indices(self):
-        verts, _, idx = _make_cylinder_mesh(1.0, 1.0, 16)
+        _verts, _, idx = _make_cylinder_mesh(1.0, 1.0, 16)
         # Should have side + cap triangles
         assert len(idx) > 0
 
@@ -138,7 +136,6 @@ class TestFrustumPlanes:
 
     def test_far_away_aabb_culled(self):
         """An AABB far behind the camera should be culled."""
-        from pymo.viz.snapshot import CameraState
         cam = CameraState()
         cam.distance = 10.0
         cam.elevation = np.pi / 4
@@ -159,7 +156,6 @@ class TestFrustumPlanes:
 
     def test_nearby_aabb_visible(self):
         """An AABB in front of the camera should be visible."""
-        from pymo.viz.snapshot import CameraState
         cam = CameraState()
         cam.distance = 10.0
         cam.elevation = np.pi / 4

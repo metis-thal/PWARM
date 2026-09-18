@@ -8,11 +8,12 @@ Locks in the core dynamics contract of the SDK:
 - Determinism: identical initial conditions produce identical trajectories
 """
 
+import itertools
+
 import numpy as np
 import pytest
 
 from pymo.physics import WorldEngine, WorldEngineConfig
-
 
 G = 9.81
 DT = 1 / 60
@@ -89,7 +90,7 @@ class TestBounce:
                 cur_apex = z
             last_v = v
         assert len(apexes) >= 3, f"expected multiple bounces, got {apexes}"
-        for a, b in zip(apexes, apexes[1:]):
+        for a, b in itertools.pairwise(apexes):
             assert b < a + 1e-6, f"energy injected: apex {a} -> {b}"
 
     def test_rest_height_on_ground(self):

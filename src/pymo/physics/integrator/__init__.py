@@ -5,6 +5,7 @@ Velocity-Verlet for non-stiff, implicit for stiff (thermal, FEM).
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -13,9 +14,6 @@ import numpy as np
 if TYPE_CHECKING:
     from ..core.scene import Scene
     from ..core.state import State
-    from ..collision.system import ContactList, CollisionSystem
-    from ..coupling.coupler import Coupler
-    from ..solvers.base import Solver
 
 
 @dataclass
@@ -240,7 +238,6 @@ class ImplicitEulerIntegrator:
     def solve_linear(A: np.ndarray, b: np.ndarray) -> np.ndarray:
         """Solve A x = b. Use scipy.sparse.linalg.spsolve for sparse."""
         from scipy.sparse.linalg import spsolve
-        from scipy.sparse import csr_matrix
         if hasattr(A, 'tocsc'):
             return spsolve(A.tocsc(), b)
         return np.linalg.solve(A, b)

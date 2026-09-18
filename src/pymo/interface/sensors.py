@@ -3,6 +3,7 @@ Sensors — Camera, force, and other sensors for AI/RL observation.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import TYPE_CHECKING
@@ -10,8 +11,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from ..physics.core.state import State
     from ..physics.core.entity import EntityID
+    from ..physics.core.state import State
 
 
 class SensorType(IntEnum):

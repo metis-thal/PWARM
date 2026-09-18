@@ -15,8 +15,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from pymo.kernel.bodies import Body
-from pymo.kernel.bodies3d import Body as Body3D, Material
+from pymo.kernel.bodies3d import Body as Body3D
 
 
 @dataclass
@@ -382,13 +381,14 @@ def create_soft_body_box(
         for j in range(resolution):
             for k in range(resolution):
                 # 8 corners of the cube cell
-                def idx(di, dj, dk):
+                def idx(i, j, k, di, dj, dk):
                     return (i+di)*(resolution+1)*(resolution+1) + (j+dj)*(resolution+1) + (k+dk)
                 
-                corners = [idx(di, dj, dk) for di in (0,1) for dj in (0,1) for dk in (0,1)]
+                corners = [idx(i, j, k, di, dj, dk)
+                           for di in (0,1) for dj in (0,1) for dk in (0,1)]
                 
                 # Split cube into 5 tetras (standard decomposition)
-                tetra_indices = [
+                [
                     [corners[0], corners[1], corners[3], corners[4]],
                     [corners[1], corners[5], corners[3], corners[7]],
                     [corners[3], corners[2], corners[0], corners[4]],  # wait, reorder

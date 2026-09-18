@@ -5,6 +5,7 @@ Components are pure data (no behavior). Solvers read/write component arrays in S
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING
@@ -17,7 +18,6 @@ if TYPE_CHECKING:
 
 class Component:
     """Base class for all components. Marker interface."""
-    pass
 
 
 @dataclass(slots=True)

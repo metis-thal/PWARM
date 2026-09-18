@@ -3,12 +3,12 @@ GUI — Built-in viewer with camera sensors, entity inspector, parameter tuning.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..physics.core.scene import Scene
-    from ..physics.core.state import State
 
 
 @dataclass
@@ -65,12 +65,10 @@ class GUI:
     def _init_window(self) -> None:
         """Initialize window (GLFW/SDL/pygame)."""
         # TODO: Use glfw or pygame
-        pass
     
     def _init_renderer(self) -> None:
         """Initialize renderer (Nyx/Luisa/Pyrender)."""
         # TODO: Initialize Nyx renderer
-        pass
     
     def _handle_events(self) -> None:
         """Handle input events."""
@@ -78,7 +76,6 @@ class GUI:
         # Camera controls: orbit, pan, zoom
         # Entity selection: click to select
         # UI: ImGui or similar
-        pass
     
     def _render(self) -> None:
         """Render frame."""
@@ -102,13 +99,11 @@ class GUI:
         # Solver parameters
         # Profiler
         # Console
-        pass
     
     def _cleanup(self) -> None:
         """Cleanup resources."""
-        pass
     
-    def set_camera(self, position: tuple = None, target: tuple = None, fov: float = None) -> None:
+    def set_camera(self, position: tuple | None = None, target: tuple | None = None, fov: float | None = None) -> None:
         if position: self.camera.position = position
         if target: self.camera.target = target
         if fov: self.camera.fov = fov
@@ -125,7 +120,6 @@ class GUI:
     
     def screenshot(self, path: str) -> None:
         """Save screenshot."""
-        pass
 
 
 class CameraController:

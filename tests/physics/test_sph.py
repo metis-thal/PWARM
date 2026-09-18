@@ -16,7 +16,6 @@ from pymo.physics.solvers.sph_kernels import (
     sph_forces,
 )
 
-
 H = 0.05  # smoothing length matching SPHOptions defaults (2 * 0.025)
 
 

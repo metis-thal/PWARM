@@ -16,9 +16,12 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from pymo.geology import GeologyGrid
 
 
 class MeshType(str, Enum):
@@ -139,7 +142,7 @@ class SceneSnapshot:
     chemistry_masses: dict[str, float] = field(default_factory=dict)
 
     # Geology state (Phase 1: stratigraphy + thermal)
-    geology_grid: "GeologyGrid | None" = None
+    geology_grid: GeologyGrid | None = None
     geology_cell_size: float = 0.0
     geology_origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
     geology_slice_axis: int = 2  # 0=YZ, 1=XZ, 2=XY (horizontal)
@@ -207,7 +210,6 @@ def build_snapshot_from_physics_engine(engine: Any, camera: CameraState | None =
     This reads from the new physics engine's State arrays (rigid_pos, rigid_quat, etc.)
     and produces an immutable snapshot for the GLRenderer.
     """
-    from pymo.physics.core.component import CollisionShapeComponent
 
     state = engine.scene.double_buffer_read
     if state is None:
@@ -305,7 +307,7 @@ def build_snapshot_from_world(engine: Any, camera: CameraState | None = None) ->
     This is called by the simulation thread after each batch of ticks.
     It reads the authoritative body state and produces an immutable snapshot.
     """
-    from pymo.kernel.bodies3d import SphereShape, BoxShape, CylinderShape
+    from pymo.kernel.bodies3d import BoxShape, CylinderShape, SphereShape
 
     world = engine.world if hasattr(engine, 'world') else engine
     instances: list[InstanceData] = []

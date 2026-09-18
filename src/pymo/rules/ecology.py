@@ -18,8 +18,6 @@ from enum import Enum
 import numpy as np
 
 from pymo.kernel.bodies import Body
-from pymo.kernel.world import World
-from pymo.rules.thermal import BodyThermalSystem
 
 
 class WeatherType(Enum):
@@ -264,7 +262,7 @@ def couple_body_environment(body: EcologicalBody, env: EnvironmentState, dt: flo
     
     # Body geometry
     radius = b.radius if b.radius > 0 else 0.5
-    cross_section = np.pi * radius**2
+    np.pi * radius**2
     surface_area = 4 * np.pi * radius**2
     
     # Heat capacity
@@ -274,7 +272,7 @@ def couple_body_environment(body: EcologicalBody, env: EnvironmentState, dt: flo
     
     # Current temperature
     T_body = max(b.temperature, 50.0)
-    T_env = max(env.temperature, 50.0)
+    max(env.temperature, 50.0)
     
     # Heat transfer coefficients
     sigma = 5.67e-8
@@ -377,7 +375,7 @@ if __name__ == "__main__":
     eco = create_ecology_system(latitude_deg=40.0, longitude_deg=-74.0)
     
     # Add a body
-    from pymo.kernel.bodies import circle_body, Material
+    from pymo.kernel.bodies import Material, circle_body
     ball = circle_body([0, 0], 0.5, mass=1.0, material=Material(specific_heat=1000.0))
     eco.add_body(ball, albedo=0.3, water_mass=0.1)
     

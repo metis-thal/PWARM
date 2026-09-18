@@ -13,12 +13,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable
 
 import numpy as np
 
 from pymo.kernel.bodies import Body
-from pymo.kernel.bodies3d import Body as Body3D
 
 
 class Phase(Enum):
@@ -339,8 +337,7 @@ def step_chemistry(system: ChemicalSystem, dt: float) -> float:
             for reactant, stoich in reaction.reactants.items():
                 available_moles = system.moles(reactant)
                 max_extent = available_moles / stoich
-                if extent > max_extent:
-                    extent = max_extent
+                extent = min(extent, max_extent)
             
             if extent <= 0:
                 continue
@@ -368,7 +365,7 @@ def step_chemistry(system: ChemicalSystem, dt: float) -> float:
         if sub is None:
             continue
         
-        new_phase = sub.phase_at(system.temperature, system.pressure)
+        sub.phase_at(system.temperature, system.pressure)
         # We don't track current phase per substance in this simple model
         # In a full implementation, each substance batch would track its phase
     
@@ -407,7 +404,7 @@ def apply_phase_transitions(body: Body, chemical: ChemicalSystem) -> float:
         if sub is None or mass <= 0:
             continue
         
-        current_phase = sub.phase_at(chemical.temperature, chemical.pressure)
+        sub.phase_at(chemical.temperature, chemical.pressure)
         
         # In a full model, we'd track phase per substance batch
         # For now, just compute latent heat if phase changed

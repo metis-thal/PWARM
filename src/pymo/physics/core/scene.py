@@ -4,20 +4,21 @@ Single source of truth for the physics world.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .entity import EntityManager, ComponentMask
+from .entity import ComponentMask, EntityManager
 
 if TYPE_CHECKING:
+    from ..collision.system import CollisionSystem
+    from ..coupling.coupler import Coupler
+    from ..integrator.time_stepper import TimeStepper
+    from ..solvers.base import Solver
     from .entity import Entity, EntityID
     from .state import State
-    from ..solvers.base import Solver
-    from ..coupling.coupler import Coupler
-    from ..collision.system import CollisionSystem
-    from ..integrator.time_stepper import TimeStepper
 
 
 @dataclass(slots=True)
@@ -111,8 +112,7 @@ class Scene:
     
     def _create_initial_state(self) -> State:
         """Create initial state from entities."""
-        from .state import State, GlobalQuantities
-        from .entity import ComponentMask
+        from .state import GlobalQuantities, State
         
         counts = self.entities.total_counts()
         
@@ -172,7 +172,6 @@ class Scene:
     
     def _populate_state_from_entities(self, state: State) -> None:
         """Copy entity component data into state arrays."""
-        from .component import TransformComponent, RigidBodyComponent, CollisionShapeComponent
 
         # Build EntityID -> array-index mappings for solvers/collision lookups
         state.entity_to_rigid.clear()
@@ -190,7 +189,7 @@ class Scene:
                 # Get components from user_data (stored during create_rigid_body)
                 transform = entity.user_data.get('transform')
                 rb = entity.user_data.get('rigid_body')
-                shape = entity.user_data.get('collision_shape')
+                entity.user_data.get('collision_shape')
                 
                 if transform is not None:
                     state.rigid_pos[i] = transform.position
@@ -215,8 +214,9 @@ class Scene:
     
     def _checkpoint(self) -> None:
         """Save checkpoint for reproducibility."""
-        import torch
         import os
+
+        import torch
         
         os.makedirs(self.checkpoint_path, exist_ok=True)
         path = os.path.join(self.checkpoint_path, f"checkpoint_frame_{self.frame:08d}.pt")

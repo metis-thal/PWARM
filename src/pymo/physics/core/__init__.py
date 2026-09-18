@@ -4,40 +4,40 @@ PWARM Physics Core — Unified Scene, State, Entity, Component System.
 Single source of truth for all physics solvers. Immutable state, double-buffered for render.
 """
 
-from .scene import Scene
-from .state import State, GlobalQuantities
-from .entity import Entity, EntityID, ComponentMask, EntityManager
 from .component import (
+    ChemistryComponent,
+    CollisionShapeComponent,
     Component,
-    TransformComponent,
-    RigidBodyComponent,
-    SPHParticleComponent,
     FEMNodeComponent,
+    GeologyComponent,
     MPMParticleComponent,
     PBDParticleComponent,
+    RigidBodyComponent,
+    SPHParticleComponent,
     ThermalComponent,
-    ChemistryComponent,
-    GeologyComponent,
-    CollisionShapeComponent,
+    TransformComponent,
 )
+from .entity import ComponentMask, Entity, EntityID, EntityManager
+from .scene import Scene
+from .state import GlobalQuantities, State
 
 __all__ = [
-    "Scene",
-    "State",
-    "GlobalQuantities",
+    "ChemistryComponent",
+    "CollisionShapeComponent",
+    "Component",
+    "ComponentMask",
     "Entity",
     "EntityID",
-    "ComponentMask",
     "EntityManager",
-    "Component",
-    "TransformComponent",
-    "RigidBodyComponent",
-    "SPHParticleComponent",
     "FEMNodeComponent",
+    "GeologyComponent",
+    "GlobalQuantities",
     "MPMParticleComponent",
     "PBDParticleComponent",
+    "RigidBodyComponent",
+    "SPHParticleComponent",
+    "Scene",
+    "State",
     "ThermalComponent",
-    "ChemistryComponent",
-    "GeologyComponent",
-    "CollisionShapeComponent",
+    "TransformComponent",
 ]

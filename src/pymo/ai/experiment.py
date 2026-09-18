@@ -16,15 +16,16 @@ from __future__ import annotations
 import itertools
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 
-from pymo.kernel.bodies import circle_body, Material
+from pymo.ai.observer import TimeSeriesDataset, WorldObserver
+from pymo.kernel.bodies import Material, circle_body
 from pymo.kernel.world import World
-from pymo.ai.observer import WorldObserver, TimeSeriesDataset
 
 
 @dataclass
@@ -196,7 +197,7 @@ class ExperimentRunner:
             
             return result
             
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — isolate one failed experiment
             duration = time.time() - start_time
             return ExperimentResult(
                 config=config,
@@ -362,7 +363,7 @@ class AutonomousExperimenter:
                     try:
                         if hypothesis.expected_behavior(result.dataset):
                             passed_count += 1
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S110 — a broken check must not veto verification
                         pass
             
             # Update confidence based on pass rate

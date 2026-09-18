@@ -6,15 +6,10 @@ Solvers only process entities with their required components.
 """
 
 from __future__ import annotations
+
 import uuid
 from dataclasses import dataclass, field
 from enum import IntFlag
-from typing import TYPE_CHECKING
-
-import numpy as np
-
-if TYPE_CHECKING:
-    from .state import State
 
 
 class ComponentMask(IntFlag):

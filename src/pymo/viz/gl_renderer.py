@@ -14,7 +14,7 @@ Architecture:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import glfw
 import moderngl
@@ -27,8 +27,6 @@ from pymo.viz.snapshot import (
     MeshType,
     SceneSnapshot,
 )
-from pymo.geology import GeologySolver
-
 
 # ---------------------------------------------------------------------------
 # GLSL Shaders
@@ -476,7 +474,7 @@ class FrustumPlanes:
     planes: np.ndarray  # (6, 4) float32
 
     @classmethod
-    def from_view_projection(cls, vp: np.ndarray) -> "FrustumPlanes":
+    def from_view_projection(cls, vp: np.ndarray) -> FrustumPlanes:
         """Extract 6 frustum planes from combined view-projection matrix (Gribb-Hartmann).
 
         Given clip = VP * P, the clip-space conditions are:
@@ -673,9 +671,10 @@ class GLRenderer:
             MeshType.CYLINDER: [],
         }
         for inst in snapshot.instances:
-            if frustum is not None and inst.aabb_min is not None and inst.aabb_max is not None:
-                if not frustum.is_aabb_inside(inst.aabb_min, inst.aabb_max):
-                    continue
+            if (frustum is not None and inst.aabb_min is not None
+                    and inst.aabb_max is not None
+                    and not frustum.is_aabb_inside(inst.aabb_min, inst.aabb_max)):
+                continue
             grouped[inst.mesh_type].append(inst)
 
         ctx = self._ctx
@@ -839,7 +838,7 @@ class GLRenderer:
         return CameraState()
 
     @property
-    def ctx(self) -> "moderngl.Context | None":
+    def ctx(self) -> moderngl.Context | None:
         """The moderngl context (for overlays). None before init()."""
         return self._ctx
 
@@ -894,12 +893,11 @@ class GLRenderer:
         self._last_key = key
         if key == glfw.KEY_ESCAPE:
             self.running = False
-        elif key == glfw.KEY_R:
-            if self._last_snapshot is not None:
-                self._last_snapshot.camera.distance = self.config.cam_distance
-                self._last_snapshot.camera.elevation = self.config.cam_elevation
-                self._last_snapshot.camera.azimuth = 0.0
-                self._last_snapshot.camera.target = np.zeros(3, dtype=np.float32)
+        elif key == glfw.KEY_R and self._last_snapshot is not None:
+            self._last_snapshot.camera.distance = self.config.cam_distance
+            self._last_snapshot.camera.elevation = self.config.cam_elevation
+            self._last_snapshot.camera.azimuth = 0.0
+            self._last_snapshot.camera.target = np.zeros(3, dtype=np.float32)
 
     def _on_resize(self, window, width, height):
         if self._ctx and width > 0 and height > 0:

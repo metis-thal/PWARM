@@ -9,13 +9,12 @@ kernel's ground truth, never conflated with it (per project rule #2).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
+from torch import nn, optim
 
 
 @dataclass

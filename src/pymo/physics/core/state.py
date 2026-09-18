@@ -6,13 +6,10 @@ All arrays are contiguous, flat, solver-owned. No references between solvers.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 import numpy as np
-
-if TYPE_CHECKING:
-    from .entity import EntityID, ComponentMask
 
 
 @dataclass(slots=True)
@@ -33,7 +30,6 @@ class GlobalQuantities:
         if state.rigid_mass is not None and len(state.rigid_mass) > 0:
             masses = state.rigid_mass
             linvel = state.rigid_linvel
-            angvel = state.rigid_angvel
             
             self.total_mass = float(np.sum(masses))
             self.total_linear_momentum = np.sum(masses[:, None] * linvel, axis=0).astype(np.float64)
@@ -49,10 +45,10 @@ class GlobalQuantities:
             self.total_kinetic_energy = float(ke_linear)
         
         # SPH kinetic energy
-        if state.sph_mass is not None and len(state.sph_mass) > 0:
-            if state.sph_vel is not None:
-                ke_sph = 0.5 * np.sum(state.sph_mass * np.sum(state.sph_vel**2, axis=1))
-                self.total_kinetic_energy += float(ke_sph)
+        if (state.sph_mass is not None and len(state.sph_mass) > 0
+                and state.sph_vel is not None):
+            ke_sph = 0.5 * np.sum(state.sph_mass * np.sum(state.sph_vel**2, axis=1))
+            self.total_kinetic_energy += float(ke_sph)
         
         # Thermal energy
         if state.thermal_temp is not None and len(state.thermal_temp) > 0:

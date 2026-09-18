@@ -5,8 +5,10 @@ Vectorized step across multiple environments with different configurations.
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -166,7 +168,7 @@ class ParallelEnv:
                 in_queue.put(("step", None))
             results = []
             for _, out_queue in self._queues:
-                cmd, state = out_queue.get()
+                _cmd, state = out_queue.get()
                 results.append(state)
             return results
     
@@ -186,7 +188,7 @@ class ParallelEnv:
             results = []
             for i in indices:
                 _, out_queue = self._queues[i]
-                cmd, state = out_queue.get()
+                _cmd, state = out_queue.get()
                 results.append(state)
             return results
     
@@ -201,7 +203,7 @@ class ParallelEnv:
                 in_queue.put(("get_state", None))
             results = []
             for _, out_queue in self._queues:
-                cmd, state = out_queue.get()
+                _cmd, state = out_queue.get()
                 results.append(state)
             return results
     

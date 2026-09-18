@@ -8,21 +8,22 @@ Orchestrates:
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Optional
+
 import numpy as np
 
-from .rock_materials import RockMaterial, all_rocks
-from .geology_grid import GeologyGrid, GeologyGridConfig, create_stratified_grid
+from .geology_grid import GeologyGrid, GeologyGridConfig
+from .processes.erosion import ErosionConfig, apply_stream_power_erosion
+from .processes.sedimentation import SedimentationConfig, create_initial_stratigraphy
+from .processes.tectonics import TectonicConfig, generate_uplift_field
 from .processes.thermal import (
     ThermalConfig,
-    solve_thermal_step,
-    solve_steady_state,
     get_material_dict,
+    solve_steady_state,
+    solve_thermal_step,
 )
-from .processes.sedimentation import SedimentationConfig, create_initial_stratigraphy
-from .processes.erosion import ErosionConfig, apply_stream_power_erosion
-from .processes.tectonics import TectonicConfig, apply_tectonic_uplift, generate_uplift_field
+from .rock_materials import all_rocks
 
 
 @dataclass(slots=True)
@@ -70,7 +71,7 @@ class GeologySolver:
     Call step(dt) each simulation tick to advance geological processes.
     """
 
-    def __init__(self, config: Optional[GeologySolverConfig] = None):
+    def __init__(self, config: GeologySolverConfig | None = None):
         self.config = config or GeologySolverConfig()
         self._initialized = False
 
@@ -83,7 +84,7 @@ class GeologySolver:
             cell_size=self.config.cell_resolution,
             origin=(0.0, 0.0, 0.0)
         )
-        self.grid: Optional[GeologyGrid] = None
+        self.grid: GeologyGrid | None = None
 
         # Material library (rock_id -> RockMaterial)
         self.materials = get_material_dict()

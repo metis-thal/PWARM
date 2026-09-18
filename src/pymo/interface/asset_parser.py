@@ -5,20 +5,19 @@ Converts standard robotics/scene formats into PWARM entities.
 """
 
 from __future__ import annotations
+
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
-import xml.etree.ElementTree as ET
 
 import numpy as np
 
+from ..physics.core.component import CollisionShapeComponent as Shape
+
 if TYPE_CHECKING:
+    from ..physics.core.entity import Entity
     from ..physics.core.scene import Scene
-    from ..physics.core.entity import Entity, ComponentMask
-    from ..physics.core.component import (
-        TransformComponent, RigidBodyComponent, CollisionShapeComponent,
-        CollisionShapeComponent as Shape
-    )
 
 
 @dataclass
@@ -212,10 +211,12 @@ def _parse_urdf_geometry(elem: ET.Element) -> dict | None:
 
 
 def _create_entity_from_link(link: URDFLink) -> Entity:
-    from ..physics.core.entity import Entity, ComponentMask
     from ..physics.core.component import (
-        TransformComponent, RigidBodyComponent, CollisionShapeComponent
+        CollisionShapeComponent,
+        RigidBodyComponent,
+        TransformComponent,
     )
+    from ..physics.core.entity import ComponentMask, Entity
     
     entity = Entity(name=link.name)
     entity.mask = ComponentMask.RIGID_DYNAMIC if link.mass > 0 else ComponentMask.RIGID_STATIC

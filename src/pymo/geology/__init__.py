@@ -3,67 +3,63 @@
 Geological processes: stratigraphy, thermal conduction, erosion, tectonics.
 """
 
-from .rock_materials import (
-    RockMaterial,
-    get_rock,
-    get_rock_by_id,
-    all_rocks,
-    rock_count,
-    get_color_array,
-    get_erosion_resistance_array,
-    get_thermal_conductivity_array,
-    get_melting_point_array,
-)
-
 from .geology_grid import (
-    GeologyGridConfig,
     GeologyGrid,
+    GeologyGridConfig,
     create_stratified_grid,
 )
-
 from .geology_solver import (
-    GeologySolverConfig,
     GeologySolver,
+    GeologySolverConfig,
 )
-
-from .processes.thermal import (
-    ThermalConfig,
-    solve_thermal_step,
-    solve_steady_state,
-)
-
 from .processes.sedimentation import (
     SedimentationConfig,
-    create_initial_stratigraphy,
     add_sediment_layer,
     compute_surface_elevation,
+    create_initial_stratigraphy,
+)
+from .processes.thermal import (
+    ThermalConfig,
+    solve_steady_state,
+    solve_thermal_step,
+)
+from .rock_materials import (
+    RockMaterial,
+    all_rocks,
+    get_color_array,
+    get_erosion_resistance_array,
+    get_melting_point_array,
+    get_rock,
+    get_rock_by_id,
+    get_thermal_conductivity_array,
+    rock_count,
 )
 
 __all__ = [
-    # rock_materials
-    "RockMaterial",
-    "get_rock",
-    "get_rock_by_id",
-    "all_rocks",
-    "rock_count",
-    "get_color_array",
-    "get_erosion_resistance_array",
-    "get_thermal_conductivity_array",
-    "get_melting_point_array",
+    "GeologyGrid",
     # geology_grid
     "GeologyGridConfig",
-    "GeologyGrid",
-    "create_stratified_grid",
+    "GeologySolver",
     # geology_solver
     "GeologySolverConfig",
-    "GeologySolver",
-    # thermal
-    "ThermalConfig",
-    "solve_thermal_step",
-    "solve_steady_state",
+    # rock_materials
+    "RockMaterial",
     # sedimentation
     "SedimentationConfig",
-    "create_initial_stratigraphy",
+    # thermal
+    "ThermalConfig",
     "add_sediment_layer",
+    "all_rocks",
     "compute_surface_elevation",
+    "create_initial_stratigraphy",
+    "create_stratified_grid",
+    "get_color_array",
+    "get_erosion_resistance_array",
+    "get_melting_point_array",
+    "get_rock",
+    "get_rock_by_id",
+    "get_thermal_conductivity_array",
+    "rock_count",
+    "solve_steady_state",
+    "solve_thermal_step",
 ]

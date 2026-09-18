@@ -5,19 +5,20 @@ Phase 2 (future): Fluvial/deltaic deposition with lateral variation.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import List, Tuple
+
 import numpy as np
 
-from ..rock_materials import RockMaterial, get_rock
 from ..geology_grid import GeologyGrid, GeologyGridConfig, create_stratified_grid
+from ..rock_materials import get_rock
 
 
 @dataclass(slots=True)
 class SedimentationConfig:
     """Configuration for initial stratigraphy."""
     # List of (thickness_m, rock_name) from surface down
-    layers: List[Tuple[float, str]]
+    layers: list[tuple[float, str]]
     surface_temp: float = 293.15
     geothermal_gradient: float = 0.025  # K/m
 

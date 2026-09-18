@@ -9,8 +9,9 @@ Structured grid of GeologyCell, each cell stores:
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Tuple, Optional
+
 import numpy as np
 
 
@@ -21,10 +22,10 @@ class GeologyGridConfig:
     ny: int
     nz: int
     cell_size: float          # meters per cell (uniform)
-    origin: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # world coords of (0,0,0) cell center
+    origin: tuple[float, float, float] = (0.0, 0.0, 0.0)  # world coords of (0,0,0) cell center
 
     @property
-    def shape(self) -> Tuple[int, int, int]:
+    def shape(self) -> tuple[int, int, int]:
         return (self.nx, self.ny, self.nz)
 
     @property
@@ -32,10 +33,10 @@ class GeologyGridConfig:
         return self.nx * self.ny * self.nz
 
     @property
-    def domain_size(self) -> Tuple[float, float, float]:
+    def domain_size(self) -> tuple[float, float, float]:
         return (self.nx * self.cell_size, self.ny * self.cell_size, self.nz * self.cell_size)
 
-    def world_to_grid(self, pos: np.ndarray) -> Tuple[int, int, int]:
+    def world_to_grid(self, pos: np.ndarray) -> tuple[int, int, int]:
         """Convert world position to grid indices (floor)."""
         x = int((pos[0] - self.origin[0]) / self.cell_size)
         y = int((pos[1] - self.origin[1]) / self.cell_size)
@@ -98,7 +99,7 @@ class GeologyGrid:
             "stress": self.stress[i].copy(),
         }
 
-    def set_rock_layer(self, z_range: Tuple[int, int], rock_id: int):
+    def set_rock_layer(self, z_range: tuple[int, int], rock_id: int):
         """Set rock_id for all cells in z range [z_min, z_max)."""
         z_min, z_max = z_range
         z_min = max(0, z_min)

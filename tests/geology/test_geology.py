@@ -4,15 +4,14 @@ import numpy as np
 import pytest
 
 from pymo.geology import (
-    RockMaterial,
-    get_rock,
-    all_rocks,
-    rock_count,
-    GeologyGridConfig,
     GeologyGrid,
-    create_stratified_grid,
-    GeologySolverConfig,
+    GeologyGridConfig,
     GeologySolver,
+    GeologySolverConfig,
+    all_rocks,
+    create_stratified_grid,
+    get_rock,
+    rock_count,
 )
 
 

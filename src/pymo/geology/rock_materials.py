@@ -8,8 +8,9 @@ Each rock type has a complete set of physical parameters for:
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Dict, List
+
 import numpy as np
 
 
@@ -53,8 +54,8 @@ class RockMaterial:
 # Built-in rock library (rock_id assigned by registration order)
 # ============================================================
 
-_ROCK_LIBRARY: Dict[str, RockMaterial] = {}
-_ID_TO_ROCK: List[RockMaterial] = []
+_ROCK_LIBRARY: dict[str, RockMaterial] = {}
+_ID_TO_ROCK: list[RockMaterial] = []
 
 
 def _register(material: RockMaterial) -> RockMaterial:
@@ -242,7 +243,7 @@ def get_rock_by_id(rock_id: int) -> RockMaterial:
     return _ID_TO_ROCK[rock_id]
 
 
-def all_rocks() -> List[RockMaterial]:
+def all_rocks() -> list[RockMaterial]:
     """Return all registered rocks in rock_id order."""
     return list(_ID_TO_ROCK)
 

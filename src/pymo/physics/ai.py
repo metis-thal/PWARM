@@ -5,14 +5,14 @@ Works with pymo.physics.WorldEngine (not the old kernel.World).
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from pymo.physics import WorldEngine, WorldEngineConfig
-    from pymo.physics.core.state import State
+    from pymo.physics import WorldEngine
 
 
 @dataclass
@@ -126,19 +126,19 @@ class WorldObserver3D(WorldObserver):
         base = super().observe(n_steps)
         
         # Add SPH observations
-        times = base.time()
+        base.time()
         for step in range(n_steps):
             if step % self.sample_every == 0:
                 state = self.engine.get_state()
                 if state and state.sph_pos is not None and len(state.sph_pos) > 0:
                     # SPH center of mass
-                    com = np.mean(state.sph_pos, axis=0)
-                    pass  # Add to observations
+                    np.mean(state.sph_pos, axis=0)
+                    # Add to observations
         
         return base
 
 
-def create_free_fall_experiment(engine: "WorldEngine", height: float = 10.0, 
+def create_free_fall_experiment(engine: WorldEngine, height: float = 10.0, 
                                 mass: float = 1.0, n_steps: int = 300) -> TimeSeriesDataset:
     """Convenience: observe a single free-falling body."""
     engine.create_rigid_body((0, 0, height), mass=mass, shape='sphere', shape_params={'radius': 0.5})
@@ -147,13 +147,13 @@ def create_free_fall_experiment(engine: "WorldEngine", height: float = 10.0,
     return observer.observe(n_steps)
 
 
-def create_collision_experiment(engine: "WorldEngine", 
+def create_collision_experiment(engine: WorldEngine, 
                                 pos1: tuple = (-2, 0, 0), vel1: tuple = (2, 0, 0),
                                 pos2: tuple = (2, 0, 0), vel2: tuple = (-2, 0, 0),
                                 n_steps: int = 300) -> TimeSeriesDataset:
     """Create a two-body collision experiment."""
-    e1 = engine.create_rigid_body(pos1, mass=1.0, shape='sphere', shape_params={'radius': 0.5})
-    e2 = engine.create_rigid_body(pos2, mass=1.0, shape='sphere', shape_params={'radius': 0.5})
+    engine.create_rigid_body(pos1, mass=1.0, shape='sphere', shape_params={'radius': 0.5})
+    engine.create_rigid_body(pos2, mass=1.0, shape='sphere', shape_params={'radius': 0.5})
     engine.finalize_setup()
     
     # Set initial velocities via the write buffer

@@ -12,13 +12,11 @@ import pytest
 from pymo.physics import (
     CollisionShapeComponent,
     CollisionSystem,
-    Entity,
     EntityID,
     WorldEngine,
     WorldEngineConfig,
 )
 from pymo.physics.collision import AABB, SAPBroadPhase
-
 
 # ---------------------------------------------------------------------------
 # Helpers

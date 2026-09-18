@@ -6,6 +6,7 @@ Shared by all solvers via CollisionShapeComponent.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from itertools import combinations as _itertools_combinations
 from typing import TYPE_CHECKING
@@ -45,9 +46,9 @@ def _closest_point_in_affine_space(pts: np.ndarray):
     return pts.T @ lam, True
 
 if TYPE_CHECKING:
-    from ..core.state import State
-    from ..core.entity import EntityID, ComponentMask
     from ..core.component import CollisionShapeComponent
+    from ..core.entity import EntityID
+    from ..core.state import State
 
 # Runtime import needed for shape type dispatch (no circular dependency:
 # core.component does not import collision)
@@ -97,7 +98,7 @@ class ContactList:
 
 class AABB:
     """Axis-Aligned Bounding Box."""
-    __slots__ = ("min", "max", "entity_id", "solver_type")
+    __slots__ = ("entity_id", "max", "min", "solver_type")
     
     def __init__(self, min_bounds: np.ndarray, max_bounds: np.ndarray, entity_id: EntityID, solver_type: str):
         self.min = min_bounds.astype(np.float32)
@@ -784,7 +785,7 @@ class CollisionSystem:
 
         zeros = np.zeros(3, dtype=np.float32)
         for i, shape_a, ta, va in movers:
-            entity_a = index_to_entity[i]
+            index_to_entity[i]
             for j in range(n):
                 if j == i:
                     continue
