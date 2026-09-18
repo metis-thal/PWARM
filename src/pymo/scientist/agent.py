@@ -26,6 +26,21 @@ from .planner import ExperimentPlanner
 from .state import ScientistState
 
 
+def _evidence(records: list[ObservationRecord],
+              hypotheses: list[Hypothesis]) -> tuple[list[dict], list[dict]]:
+    """AI-side evidence for a MissionReport: measurement records + fits."""
+    observations = [
+        {"experiment_id": r.experiment_id,
+             "t": [round(float(v), 6) for v in r.t],
+             "z": [round(float(v), 6) for v in r.z],
+             "vx": ([round(float(v), 6) for v in r.vx] if r.vx is not None else None)}
+        for r in records
+    ]
+    hyps = [{"claim": h.claim, "value": h.value, "r2": h.r2,
+                 "formula": h.formula, "experiment_id": h.experiment_id}
+            for h in hypotheses]
+    return observations, hyps
+
 class ScientistAgent:
     """An autonomous scientist working in an unknown universe."""
 
@@ -117,10 +132,13 @@ class ScientistAgent:
             and verification.stable
             and verification.confidence >= mission.min_confidence
         )
+        observations, hyp_dicts = _evidence(records, hypotheses)
         report = MissionReport(
             mission_id=mission.id,
             status="DISCOVERED" if concluded else "INCOMPLETE",
             experiments_run=len(records),
+            observations=observations,
+            hypotheses=hyp_dicts,
             estimates=[h.value for h in hypotheses],
             value=verification.mean if verification is not None else None,
             unit=mission.unit,
@@ -165,6 +183,7 @@ class ScientistAgent:
         """
         designer = designer or ExperimentDesigner()
         hypotheses: list[Hypothesis] = []
+        records: list[ObservationRecord] = []
         proposal_log: list[str] = []
         experiments_run = 0
 
@@ -181,6 +200,7 @@ class ScientistAgent:
                 material=proposal.design.get("material"),
             )
             record = self.laboratory.run_experiment(spec)
+            records.append(record)
             experiments_run += 1
             self.observe(record)
 
@@ -214,6 +234,7 @@ class ScientistAgent:
             summary += "\n\nexperiment proposals:\n" + "\n".join(
                 f"  {i + 1}. {reason}" for i, reason in enumerate(proposal_log))
 
+        observations, hyp_dicts = _evidence(records, hypotheses)
         return MissionReport(
             mission_id=mission.id,
             status="DISCOVERED" if published else "INCOMPLETE",
@@ -223,6 +244,8 @@ class ScientistAgent:
             formula="material properties" if published else "",
             knowledge_saved=published > 0,
             summary=summary,
+            observations=observations,
+            hypotheses=hyp_dicts,
         )
 
     # -- Mission 003: science under constraints --------------------------------
@@ -254,6 +277,7 @@ class ScientistAgent:
         """
         designer = designer or ExperimentDesigner()
         hypotheses: list[Hypothesis] = []
+        records: list[ObservationRecord] = []
         proposal_log: list[str] = []
         instrument_log: list[str] = []
         experiments_run = 0
@@ -297,6 +321,7 @@ class ScientistAgent:
                 material=proposal.design.get("material"),
             )
             record = self.laboratory.run_experiment(spec)
+            records.append(record)
             budget.spend(proposal.cost, record.steps)
             experiments_run += 1
             self.observe(record)
@@ -339,6 +364,7 @@ class ScientistAgent:
             summary += "\n\nexperiment proposals:\n" + "\n".join(
                 f"  {i + 1}. {reason}" for i, reason in enumerate(proposal_log))
 
+        observations, hyp_dicts = _evidence(records, hypotheses)
         return MissionReport(
             mission_id=mission.id,
             status="DISCOVERED" if published else "INCOMPLETE",
@@ -348,6 +374,8 @@ class ScientistAgent:
             formula="material properties" if published else "",
             knowledge_saved=published > 0,
             summary=summary,
+            observations=observations,
+            hypotheses=hyp_dicts,
         )
 
     # -- publication -----------------------------------------------------------

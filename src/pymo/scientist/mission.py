@@ -37,6 +37,10 @@ class MissionReport:
     formula: str = ""
     knowledge_saved: bool = False
     summary: str = ""
+    # AI-side evidence (measurement records + derived hypotheses) for
+    # reproducibility artifacts — never contains universe secrets.
+    observations: list[dict] = field(default_factory=list)
+    hypotheses: list[dict] = field(default_factory=list)
 
     def __str__(self) -> str:
         lines = [f"Mission {self.mission_id}: {self.status}"]
