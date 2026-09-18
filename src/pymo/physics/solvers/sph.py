@@ -5,8 +5,9 @@ WCSPH (Weakly Compressible SPH) with boundary particles for fluid-rigid coupling
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -16,7 +17,6 @@ from . import CouplingData
 from .sph_kernels import neighbors_to_csr, sph_density, sph_forces
 
 if TYPE_CHECKING:
-    from ..core.scene import Scene
     from ..core.state import State
 
 
@@ -39,7 +39,7 @@ class SPHSolver:
     """WCSPH fluid solver with neighbor search and boundary handling."""
 
     name = "sph"
-    required_components = [ComponentMask.SPH_PARTICLE]
+    required_components: ClassVar[list[ComponentMask]] = [ComponentMask.SPH_PARTICLE]
 
     # Safety cap: bounds the worst-case CFL demand so a frame cannot hang.
     _MAX_SUBSTEPS = 400
@@ -90,7 +90,7 @@ class SPHSolver:
         new_state = state.copy()
 
         h = self.options.particle_radius * 2.0  # Smoothing length
-        h2 = h * h
+        h * h
 
         # 1. Neighbor search (KD-tree), converted to CSR for the kernels
         neighbors = self._find_neighbors(state.sph_pos, h)

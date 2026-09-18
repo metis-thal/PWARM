@@ -5,8 +5,9 @@ Integrates with the new physics architecture.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 
@@ -15,7 +16,6 @@ from . import CouplingData
 from .contact_kernels import solve_contacts_velocity
 
 if TYPE_CHECKING:
-    from ..core.scene import Scene
     from ..core.state import State
 
 
@@ -32,7 +32,7 @@ class RigidSolver:
     """Rigid body solver with impulse-based contact resolution."""
     
     name = "rigid"
-    required_components = [ComponentMask.RIGID_BODY]
+    required_components: ClassVar[list[ComponentMask]] = [ComponentMask.RIGID_BODY]
     
     def __init__(self, options: dict | None = None):
         self.options = RigidOptions(**(options or {}))
@@ -48,7 +48,7 @@ class RigidSolver:
         if state.rigid_pos is None or len(state.rigid_pos) == 0:
             return new_state
         
-        n = len(state.rigid_pos)
+        len(state.rigid_pos)
         
         # 1. Apply gravity
         gravity = self.scene.gravity if self.scene else np.array([0, 0, -9.81], dtype=np.float32)
@@ -137,7 +137,7 @@ class RigidSolver:
         if not triples:
             return state
 
-        m = len(triples)
+        len(triples)
         idx_a_arr = np.array([t[0] for t in triples], dtype=np.int64)
         idx_b_arr = np.array([t[1] for t in triples], dtype=np.int64)
         normals = np.array([t[2].normal for t in triples], dtype=np.float64)
@@ -243,9 +243,7 @@ class RigidBodyBuilder:
     @staticmethod
     def create_sphere(position: np.ndarray, radius: float, mass: float = 1.0) -> dict:
         """Create components for a sphere rigid body."""
-        from ..core.component import (
-            TransformComponent, RigidBodyComponent, CollisionShapeComponent
-        )
+        from ..core.component import CollisionShapeComponent, RigidBodyComponent, TransformComponent
         from ..core.entity import ComponentMask
         
         return {
@@ -267,9 +265,7 @@ class RigidBodyBuilder:
     @staticmethod
     def create_box(position: np.ndarray, half_extents: np.ndarray, mass: float = 1.0) -> dict:
         """Create components for a box rigid body."""
-        from ..core.component import (
-            TransformComponent, RigidBodyComponent, CollisionShapeComponent
-        )
+        from ..core.component import CollisionShapeComponent, RigidBodyComponent, TransformComponent
         from ..core.entity import ComponentMask
         
         hx, hy, hz = half_extents

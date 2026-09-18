@@ -5,16 +5,17 @@ These integrate with the new architecture. Full implementations to be added.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 
 from ..core.entity import ComponentMask
+from .base import CouplingData
 
 if TYPE_CHECKING:
     from ..core.state import State
-    from .base import Solver, CouplingData
 
 
 # =============================================================================
@@ -33,7 +34,7 @@ class FEMSolver:
     """FEM deformable body solver. Implicit integration for stability."""
     
     name = "fem"
-    required_components = [ComponentMask.FEM_NODE]
+    required_components: ClassVar[list[ComponentMask]] = [ComponentMask.FEM_NODE]
     
     def __init__(self, options: dict | None = None):
         self.options = FEMOptions(**(options or {}))
@@ -51,14 +52,14 @@ class FEMSolver:
         # x_new = x + v*dt + 0.5*a*dt^2
         # v_new = v + 0.5*(a + a_new)*dt
         
-        if state.fem_pos is not None and len(state.fem_pos) > 0:
+        if (state.fem_pos is not None and len(state.fem_pos) > 0
+                and state.fem_contact_forces is not None):
             # Compute internal forces (elastic)
             # f_int = -K * (x - x_rest)
             # For now, just apply external forces
-            if state.fem_contact_forces is not None:
-                accel = state.fem_contact_forces / self.options.density
-                new_state.fem_vel = state.fem_vel + accel * dt
-                new_state.fem_pos = state.fem_pos + new_state.fem_vel * dt
+            accel = state.fem_contact_forces / self.options.density
+            new_state.fem_vel = state.fem_vel + accel * dt
+            new_state.fem_pos = state.fem_pos + new_state.fem_vel * dt
         
         return new_state
     
@@ -104,7 +105,7 @@ class MPMSolver:
     """MPM solver for granular/fluid-like materials."""
     
     name = "mpm"
-    required_components = [ComponentMask.MPM_PARTICLE]
+    required_components: ClassVar[list[ComponentMask]] = [ComponentMask.MPM_PARTICLE]
     
     def __init__(self, options: dict | None = None):
         self.options = MPMOptions(**(options or {}))
@@ -120,7 +121,7 @@ class MPMSolver:
         new_state = state.copy()
         
         if state.mpm_pos is not None and len(state.mpm_pos) > 0:
-            n = len(state.mpm_pos)
+            len(state.mpm_pos)
             
             # Particle to Grid (P2G)
             # Scatter particle mass/momentum to grid
@@ -163,7 +164,7 @@ class PBDSolver:
     """PBD solver for cloth, hair, soft bodies."""
     
     name = "pbd"
-    required_components = [ComponentMask.PBD_PARTICLE]
+    required_components: ClassVar[list[ComponentMask]] = [ComponentMask.PBD_PARTICLE]
     
     def __init__(self, options: dict | None = None):
         self.options = PBDOptions(**(options or {}))
@@ -177,7 +178,7 @@ class PBDSolver:
         new_state = state.copy()
         
         if state.pbd_pos is not None and len(state.pbd_pos) > 0:
-            n = len(state.pbd_pos)
+            len(state.pbd_pos)
             
             # 1. Predict positions
             new_state.pbd_pred_pos = state.pbd_pos + state.pbd_vel * dt
@@ -236,12 +237,9 @@ class PBDSolver:
     def _solve_bending_constraints(self, state: State) -> None:
         """Solve bending constraints (dihedral angle)."""
         # Placeholder
-        pass
     
     def _solve_collision_constraints(self, state: State, contacts: list) -> None:
         """Project particles out of collision."""
-        pos = state.pbd_pred_pos
-        radius = self.options.particle_radius
         
         for contact in contacts:
             # Push particles out of penetration
@@ -284,7 +282,7 @@ class ChemistrySolver:
     """Chemistry solver: species transport + reactions."""
     
     name = "chemistry"
-    required_components = [ComponentMask.CHEMISTRY]
+    required_components: ClassVar[list[ComponentMask]] = [ComponentMask.CHEMISTRY]
     
     def __init__(self, options: dict | None = None):
         self.options = ChemistryOptions(**(options or {}))
@@ -299,14 +297,13 @@ class ChemistrySolver:
         
         if state.chem_conc is not None and len(state.chem_conc) > 0:
             conc = state.chem_conc.copy()
-            n, num_species = conc.shape
+            _n, _num_species = conc.shape
             
             # Diffusion (explicit Euler)
             if state.chem_diffusion is not None:
-                D = np.array(state.chem_diffusion)
+                np.array(state.chem_diffusion)
                 # Simple 1D diffusion for now: dc/dt = D * d2c/dx2
                 # In practice, use sparse matrix for 2D/3D
-                pass
             
             # Reactions
             for reaction, rate in self.options.reaction_rates.items():
@@ -361,7 +358,7 @@ class ThermalSolver:
     """Thermal conduction solver (implicit Euler for stability)."""
     
     name = "thermal"
-    required_components = [ComponentMask.THERMAL]
+    required_components: ClassVar[list[ComponentMask]] = [ComponentMask.THERMAL]
     
     def __init__(self, options: dict | None = None):
         self.options = ThermalOptions(**(options or {}))
@@ -423,7 +420,7 @@ class GeologySolver:
     """Geological processes: stratigraphy, erosion, tectonics, thermal."""
     
     name = "geology"
-    required_components = [ComponentMask.GEOLOGY]
+    required_components: ClassVar[list[ComponentMask]] = [ComponentMask.GEOLOGY]
     
     def __init__(self, options: dict | None = None):
         self.options = GeologyOptions(**(options or {}))
