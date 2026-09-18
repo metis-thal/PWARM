@@ -22,7 +22,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install (core + dev)
-        run: pip install -e ".[core,dev]"
+        run: pip install -e ".[dev]"
 
       - name: Lint
         run: ruff check src tests

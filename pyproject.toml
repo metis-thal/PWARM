@@ -10,17 +10,17 @@ readme = "README.md"
 requires-python = ">=3.10,<3.12"
 authors = [{ name = "PWARM" }]
 license = { text = "MIT" }
-
-[project.scripts]
-pwarm = "pymo.cli:main"
-
-[project.optional-dependencies]
-core = [
+dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
     "numba>=0.59",
     "pyyaml>=6.0",
 ]
+
+[project.scripts]
+pwarm = "pymo.cli:main"
+
+[project.optional-dependencies]
 ai = [
     "pysr>=0.16",
     "torch>=2.1",
@@ -40,6 +40,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+pymo = ["universes/*/config.yaml", "universes/*/rules.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

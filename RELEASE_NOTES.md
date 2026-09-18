@@ -63,7 +63,7 @@ Mission 003 的仪器弧是本版本的核心叙事：AI 用落体/滑动装置�
 ```bash
 git clone https://github.com/metis-thal/PWARM.git
 cd PWARM && python -m venv .venv && .venv/Scripts/activate   # Windows
-pip install -e ".[core,ai,viz,parallel,dev]"
+pip install -e ".[viz,dev]"
 pytest tests/scientist/ -q
 python scripts/demo_mission_001.py    # 001 → 002 → 003
 ```
