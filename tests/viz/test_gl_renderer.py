@@ -1,4 +1,15 @@
-"""Tests for GLRenderer mesh generation and shader compilation."""
+"""Tests for GLRenderer mesh generation and shader compilation.
+
+All tests here are pure CPU (mesh geometry, config, frustum math) — none
+creates a GL context, so they run on headless CI. The optional viz deps
+(glfw/moderngl) are guarded at import: without them the module is skipped
+entirely instead of erroring.
+"""
+
+import pytest
+
+pytest.importorskip("glfw", reason="viz extra not installed")
+pytest.importorskip("moderngl", reason="viz extra not installed")
 
 import numpy as np
 
