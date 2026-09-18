@@ -1,7 +1,14 @@
 # PWARM
 Physical World AI Reasoning Model
 
-### 一个自主科学发现的开放研究环境 / An open research environment for autonomous scientific discovery.
+### v0.1 Research Preview — 一个自主科学发现的研究原型 / A research prototype for autonomous scientific discovery.
+
+> **诚实定位 / Honest scope:** v0.1 证明的是一个可运行的 *scientific-agent
+> prototype*——AI 能在模拟世界中自主发现定律、自选实验、在预算下做科学并申请
+> 仪器。它**不是**通用科学智能；通用性是 v0.3+ 的目标。
+> v0.1 proves a runnable *scientific-agent prototype* — an AI that discovers
+> laws, designs its own experiments, does science under a budget, and requests
+> instruments. It is **not** general scientific intelligence; that is v0.3+.
 
 给 AI 科学家一个未知的模拟世界。/ Give an AI scientist an unknown simulated world.
 
@@ -11,13 +18,43 @@ Physical World AI Reasoning Model
 它验证它们。/ It tests them.
 它积累知识。/ It accumulates knowledge.
 
+**核心原则：AI 可以观察世界，但不能读取答案。**
+**Core principle: the AI may observe the world, but it can never read the answers.**
+
+---
+
+## 60 秒看到它工作 / See it work in 60 seconds
+
+```bash
+git clone https://github.com/metis-thal/PWARM.git
+cd PWARM && pip install -e .
+pwarm demo          # 或 / or: make demo
+```
+
+无 GPU、无窗口、纯终端：AI 科学家规划三次落体、拟合轨迹、交叉验证、发表知识。
+
+```text
+======================================================================
+   PWARM MISSION 001 — DISCOVER GRAVITY
+======================================================================
+
+Universe: Unknown Planet
+Hidden gravity:  ????            (the AI is not told)
+
+    drop_h10_m1:  g ≈ 9.80999 m/s^2   (R^2 = 1.0000)
+    drop_h20_m1:  g ≈ 9.80999 m/s^2   (R^2 = 1.0000)
+    drop_h5_m1:   g ≈ 9.81000 m/s^2   (R^2 = 1.0000)
+
+   DISCOVERY CONFIRMED
+Ground truth (narrator only): 9.81 m/s^2 · error 0.0001%
+```
+
+`pwarm demo 002` 看自主实验设计与诚实的 UNIDENTIFIABLE 报告；
+`pwarm demo 003` 看预算约束与完整的仪器申请弧线。
+
 ---
 
 ## Mission 001 — AI 能否在不知道重力值的情况下发现重力？/ Can an AI discover gravity without being told its value?
-
-```
-python scripts/demo_mission_001.py
-```
 
 ```
 估计重力: 9.81000 m/s²     Estimated gravity: 9.81000 m/s²
@@ -31,13 +68,17 @@ AI 科学家从三个不同高度落下小球，将每条轨迹拟合为二次�
 
 知识持久化：第二次运行从文明知识中得出结论，无需重新运行任何实验。
 
+完整档案（12 节：隐藏变量、观察空间、原始数据、假设、验证、真值、误差、种子）：
+[docs/missions/001-discover-gravity.md](docs/missions/001-discover-gravity.md) ·
+可复现档案：[reproducibility/mission_001/](reproducibility/mission_001/)
+
 ---
 
 ## 为什么选择 PWARM？/ Why PWARM?
 
 **物理是真实的。** 所有现象从底层微分方程中涌现——没有硬编码的动画，没有预设事件。AI 只能看到测量通道提供的信息。
 
-**科学是诚实的。** AI 无法作弊。它通过科学方法获取知识：规划→执行→观察→假设→验证→发表。它不能知道的，就诚实承认。
+**科学是诚实的。** AI 无法作弊。它通过科学方法获取知识：规划→执行→观察→假设→验证→发表。它不能知道的，就诚实承认——Mission 002 的 `UNIDENTIFIABLE` 密度报告和 Mission 003 的仪器申请弧线是本项目的核心展示，而非脚注。
 
 **进展是渐进的。** 每个 Mission 增加一个新能力。AI 的世界随着方法的成熟而变得丰富。
 
@@ -54,17 +95,22 @@ python -m venv .venv
 # Linux/macOS:
 source .venv/bin/activate
 
-pip install -e ".[core,ai,viz,parallel,dev]"
+pip install -e .            # 终端体验（核心）/ terminal experience (core)
+pip install -e ".[viz]"     # 加 GL 仪表盘 / add the GL dashboards
+pip install -e ".[dev]"     # 开发 / development
 ```
 
 ```bash
-# 运行最简单的任务——发现重力
+# 一条命令（无 GPU）/ one command, no GPU:
+pwarm demo                  # Mission 001 — discover gravity
+pwarm demo 002              # Mission 002 — autonomous experiments + honest unknowns
+pwarm demo 003              # Mission 003 — budget + instrument request arc
+make test                   # 76 tests
+make repro                  # regenerate every reproducibility envelope
+
+# GL 仪表盘（需要窗口）/ GL dashboards (need a window):
 python scripts/demo_mission_001.py
-
-# 自主实验设计
 python scripts/demo_mission_002.py
-
-# 预算约束下的科学与仪器申请
 python scripts/demo_mission_003.py
 ```
 
@@ -201,14 +247,23 @@ src/pymo/
 ```bash
 pytest -q                    # 所有测试 / all tests
 pytest tests/scientist/      # 仅科学家任务 / scientist missions only
+make repro                   # 重新生成全部可复现性档案 / regenerate all envelopes
 ```
 
 | 测试套件 / Test Suite | 测试数 / Tests | 状态 / Status |
 |-----------------------|---------------|---------------|
-| Mission 001 | 5 | ✅ 全部通过 |
-| Mission 002 | 8 | ✅ 全部通过 |
-| Mission 003 | 8 | ✅ 全部通过 |
-| **总计 / Total** | **21** | **✅** |
+| Mission 001–003 scientist | 21 | ✅ 全部通过 |
+| AI↔Physics contract | 4 | ✅ 全部通过 |
+| Reproducibility envelopes | 6 | ✅ 全部通过 |
+| Engine / geology / viz / rules | 45 | ✅ 全部通过 (3 skip) |
+
+每个 Mission 附带可复现档案
+[`reproducibility/mission_XXX/`](reproducibility/)（config · seed · run.sh ·
+expected_output · results），回答八个可信度问题：隐藏了什么 / AI 能观察什么 /
+能做哪些实验 / 它选了什么 / 发现了什么 / 真值是什么 / 误差多大 / 种子是什么。
+人侧评估（含真值对比与诚实失败记录）在
+[`scientific_evaluation/`](scientific_evaluation/)。CI 在每次推送时于
+Ubuntu + Windows 重跑全部档案并断言误差阈值。
 
 知识跨会话持久化。第二次任务运行加载 `knowledge/universe_*.json` 并得出结论，无需重新运行实验。
 
