@@ -244,6 +244,12 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The discovery output uses box-drawing glyphs (═ ↓); Windows consoles
+    # default to a legacy codepage (cp1252 on GitHub runners) that cannot
+    # encode them — force UTF-8 before anything prints.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     import pymo
     parser = argparse.ArgumentParser(
         prog="pwarm",
