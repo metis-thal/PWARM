@@ -20,6 +20,11 @@ from .instrument import InstrumentCatalog, InstrumentGrant, InstrumentRequest, a
 from .knowledge import KnowledgeBase, LawRecord
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
+from .prediction import (
+    ScientificModel,
+    disagreement,
+    model_prediction,
+)
 from .state import ScientistState
 from .uncertainty import certainty_class, relative_width, total_uncertainty
 
@@ -41,12 +46,15 @@ __all__ = [
     "Mission",
     "MissionReport",
     "ObservationRecord",
+    "ScientificModel",
     "ScientistAgent",
     "ScientistState",
     "Verification",
     "analyze_gap",
     "certainty_class",
+    "disagreement",
     "fit_free_fall",
+    "model_prediction",
     "relative_width",
     "total_uncertainty",
     "verify",

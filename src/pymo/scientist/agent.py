@@ -23,6 +23,13 @@ from .instrument import InstrumentCatalog, analyze_gap
 from .knowledge import KnowledgeBase
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
+from .prediction import (
+    Prediction,
+    PredictionRecord,
+    VerificationRecord,
+    adjudicate,
+    prediction_from_belief,
+)
 from .state import ScientistState
 
 
@@ -49,6 +56,12 @@ class ScientistAgent:
         self.laboratory = laboratory
         self.knowledge = knowledge
         self.planner = planner or ExperimentPlanner()
+        # Genesis Phase 1: the last guesses, their committed (hashed,
+        # persisted) records, and the verification verdicts.
+        self.last_predictions: list[Prediction] = []
+        self.last_committed_predictions: list[PredictionRecord] = []
+        self.last_verifications: list[VerificationRecord] = []
+        self.last_state: ScientistState | None = None
 
     # -- faculties -----------------------------------------------------------
 
@@ -83,10 +96,84 @@ class ScientistAgent:
         """Cross-experiment verification (None when there is nothing to verify)."""
         return verify(hypotheses) if hypotheses else None
 
+    # -- Genesis Phase 1: predict + commit BEFORE observing -------------------
+
+    def form_prediction(self, mission: Mission,
+                        state: ScientistState | None = None) -> list[Prediction]:
+        """The AI's commitment about what the experiment will show, formed
+        BEFORE any experiment executes. The guess is translated from the
+        scientist's OWN gravity belief — its self-model (Genesis Phase 2);
+        no observation data participates, and the ordering guarantee stays
+        structural: run_mission calls this before run_experiment.
+        """
+        if mission.target != "gravity":
+            return []
+        if state is None:
+            # Minimal self-model: one belief for the mission's target claim,
+            # built from AI-visible vocabulary only (claim name + knowledge).
+            state = ScientistState((mission.target,), self.knowledge)
+        belief = state.belief("gravity")
+        if belief is None or belief.status == "unidentifiable":
+            return []     # honest metacognition: no belief to commit
+        return [prediction_from_belief(belief)]
+
+    def commit_predictions(self, guesses: list[Prediction],
+                           specs: list[ExperimentSpec],
+                           ) -> list[PredictionRecord]:
+        """Hash and persist each commitment — BEFORE physics runs. From
+        here on the predictions are immutable scientific history: a changed
+        mind commits a NEW prediction, never an edit.
+        """
+        spec_ref = ", ".join(spec.id for spec in specs)
+        return [self.knowledge.commit_prediction(
+                    model_ref=guess.source, claim=guess.claim,
+                    spec_ref=spec_ref, value=guess.value,
+                    tolerance=guess.tolerance)
+                for guess in guesses]
+
+    def verify_predictions(self, committed: list[PredictionRecord],
+                           records: list[ObservationRecord],
+                           ) -> list[VerificationRecord]:
+        """Adjudicate the committed predictions against the NEW observations:
+        hash-check each commitment, fit the record AI-side, and persist one
+        VerificationRecord per (prediction, record). Confirmed and refuted
+        are both first-class outcomes — history is never overwritten.
+        """
+        verifications: list[VerificationRecord] = []
+        for prediction in committed:
+            for record in records:
+                outcome = adjudicate(prediction, record)
+                verifications.append(self.knowledge.record_verification(
+                    prediction.prediction_id, record.experiment_id, outcome))
+        return verifications
+
+    def learn_from_verifications(self, state: ScientistState,
+                                 committed: list[PredictionRecord],
+                                 verifications: list[VerificationRecord],
+                                 ) -> None:
+        """Genesis Phase 2 Step 2: fold each verification verdict back into
+        the self-model (confirmed tightens the belief, refuted widens it).
+        Deterministic and AI-side only — the knowledge base is untouched."""
+        by_id = {p.prediction_id: p for p in committed}
+        for verification in verifications:
+            prediction = by_id.get(verification.prediction_id)
+            if prediction is not None:
+                state.learn_from_verification(
+                    claim=prediction.claim, status=verification.status,
+                    observed=verification.observed,
+                    predicted=prediction.predicted,
+                    tolerance=prediction.tolerance)
+
     # -- the mission loop ------------------------------------------------------
 
-    def run_mission(self, mission: Mission) -> MissionReport:
-        """Execute the full scientific method for one mission."""
+    def run_mission(self, mission: Mission,
+                    state: ScientistState | None = None) -> MissionReport:
+        """Execute the full scientific method for one mission.
+
+        ``state`` optionally supplies the AI's self-model; the prediction
+        step reads its gravity belief (a minimal one-belief self-model is
+        built from the mission target when omitted).
+        """
         specs = self.create_experiment(mission)
         if not specs:
             law = self.knowledge.get(mission.target)
@@ -107,10 +194,35 @@ class ScientistAgent:
                 summary="planner produced no experiments for this mission",
             )
 
+        # Genesis Phase 2: the mission runs against the AI's self-model —
+        # predictions are drawn from its beliefs, verifications feed back.
+        if state is None:
+            state = ScientistState((mission.target,), self.knowledge)
+        self.last_state = state
+
+        # Genesis Phase 1: predict, then COMMIT (hash + persist) BEFORE any
+        # experiment executes — the result must not be available when the
+        # prediction is formed.
+        guesses = self.form_prediction(mission, state)
+        self.last_predictions = list(guesses)
+        committed = self.commit_predictions(guesses, specs)
+        self.last_committed_predictions = list(committed)
+
         # 1-2. propose + execute (physics runs the world; AI only observes)
         records: list[ObservationRecord] = []
         for spec in specs:
             records.append(self.laboratory.run_experiment(spec))
+
+        # Genesis Phase 1: verify the committed predictions against the new
+        # observations (committed hash + record only — never engine truth).
+        self.last_verifications = self.verify_predictions(committed, records)
+        # Verification resolves statuses in the store (records are replaced,
+        # never mutated in place) — refresh the agent's view of its history.
+        self.last_committed_predictions = [
+            self.knowledge.prediction(p.prediction_id) for p in committed]
+        # Genesis Phase 2 Step 2: verification feeds back into the beliefs —
+        # confirmed tightens, refuted widens. Cognition only, never law.
+        self.learn_from_verifications(state, committed, self.last_verifications)
 
         # 3-4. observe + hypothesize
         for record in records:

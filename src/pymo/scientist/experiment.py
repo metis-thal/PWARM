@@ -21,6 +21,12 @@ Experiment kinds:
                     water surface; the buoyant force makes the descent
                     acceleration depend on density,
                     a = g (1 - rho_fluid / rho)
+    * ``immersion_test`` Mission 004 Day 1: the dual apparatus — the
+                    ambient liquid's density is the universe's hidden
+                    truth, and the sample is a CERTIFIED reference sphere
+                    of known density (instrument spec). Same hydrostatic
+                    buoyancy mechanism; the record is the Day 1
+                    deliverable (measurement only, no derive yet)
 
 Apparatus: the ground is a hard anvil (friction 1.0, restitution 1.0) so the
 contact pair minimum passes the MATERIAL's properties through — the measured
@@ -70,6 +76,9 @@ class ExperimentSpec:
             return f"slide_test_{self.material}_v{self.v0:g}"
         if self.kind == "buoyancy_test":
             return f"buoyancy_test_{self.material}_d{self.drop_height:g}"
+        if self.kind == "immersion_test":
+            # design only — the sample is the rig's fixed reference sphere
+            return f"immersion_test_d{self.drop_height:g}"
         return f"drop_h{self.drop_height:g}_m{self.mass:g}"
 
 
@@ -103,7 +112,8 @@ class ExperimentSession:
             raise ValueError(
                 f"universe '{universe.name}' has no gravity secret; "
                 "experiments are undefined")
-        if spec.kind not in ("drop", "drop_test", "slide_test", "buoyancy_test"):
+        if spec.kind not in ("drop", "drop_test", "slide_test", "buoyancy_test",
+                             "immersion_test"):
             raise ValueError(f"unsupported experiment kind: {spec.kind}")
 
         # Material properties are a physics-side secret use: they flow into
@@ -163,6 +173,8 @@ class ExperimentSession:
                     [spec.v0, 0.0, 0.0], dtype=np.float32)
         elif spec.kind == "buoyancy_test":
             self._build_fluid_tank(body_friction, body_restitution)
+        elif spec.kind == "immersion_test":
+            self._build_immersion_tank()
         else:  # "drop" / "drop_test"
             self._engine.create_rigid_body(
                 (0, 0, spec.drop_height), mass=spec.mass, shape="sphere",
@@ -210,8 +222,16 @@ class ExperimentSession:
             shape_params={"radius": _SAMPLE_RADIUS,
                           "friction": body_friction,
                           "restitution": body_restitution})
+        self._build_tank_walls()
 
-        # Tank fixture: floor slab + four walls (static bodies).
+    def _build_tank_walls(self) -> None:
+        """Shared tank fixture: floor slab + four walls (static bodies).
+
+        Identical geometry for every tank-based apparatus (Mission 003's
+        Fluid Tank, Mission 004's immersion rig): surface at z=8.0, floor
+        top at z=0.5, walls spanning 0.5..8.9. The sample must already be
+        body 0 before this runs.
+        """
         self._engine.create_rigid_body(
             (0, 0, 0.4), mass=0.0, shape="box",
             shape_params={"half_extents": [2.2, 2.2, 0.1],
@@ -223,6 +243,38 @@ class ExperimentSession:
                 shape_params={"half_extents": [hx, hy, 4.2],
                               "friction": 0.1, "restitution": 0.0})
         self._engine.finalize_setup()
+
+    def _build_immersion_tank(self) -> None:
+        """Immersion rig (Mission 004 Day 1): the dual of the Fluid Tank.
+
+        The AMBIENT LIQUID is the universe's hidden truth (read here on
+        the physics side only); the sample is the rig's certified
+        reference sphere at its SPECIFIED density (instrument metadata,
+        symmetric to buoyancy_test.FLUID_DENSITY). Same tank geometry,
+        same buoyancy mechanism as Mission 003 — no new physics.
+        """
+        from .experiments.immersion_test import SAMPLE_DENSITY
+
+        fluid = self.universe.secrets.materials.get("ambient_fluid")
+        if fluid is None or "density" not in fluid:
+            raise ValueError(
+                "immersion_test requires an 'ambient_fluid' material with "
+                "a density secret in this universe (physics-side)")
+        volume = 4.0 / 3.0 * math.pi * _SAMPLE_RADIUS ** 3
+        self._fluid_volume = volume
+        self._fluid_density = float(fluid["density"])   # hidden truth:
+        # applied as a force below; never returned to the AI side
+        self._sample_radius = _SAMPLE_RADIUS
+
+        # Certified reference sphere as body 0 (observation + buoyancy
+        # target), neutral contact parameters — it is apparatus, not a
+        # universe material.
+        release_z = _TANK_SURFACE_Z - float(self.spec.drop_height)
+        self._engine.create_rigid_body(
+            (0, 0, release_z), mass=SAMPLE_DENSITY * volume, shape="sphere",
+            shape_params={"radius": _SAMPLE_RADIUS,
+                          "friction": 0.5, "restitution": 0.0})
+        self._build_tank_walls()
 
     def _apply_buoyancy(self) -> None:
         """Apparatus action: F = rho_fluid * g * V (upward) on the submerged
@@ -263,7 +315,7 @@ class ExperimentSession:
         """Advance one tick. Returns True while the session is still running."""
         if not self.running:
             return False
-        if self.spec.kind == "buoyancy_test":
+        if self.spec.kind in ("buoyancy_test", "immersion_test"):
             self._apply_buoyancy()
         st = self._engine.tick()
         self._steps += 1
@@ -301,9 +353,11 @@ class ExperimentSession:
                     self._recorded_done = True    # no bounce: restitution ~ 0
             elif vz < -0.05:
                 self._recorded_done = True        # descending past the apex
-        elif kind == "buoyancy_test":
+        elif kind in ("buoyancy_test", "immersion_test"):
             # Record the submerged descent: a clean parabola whose curvature
-            # is g*(1 - rho_fluid/rho) — the density observable.
+            # is g*(1 - rho_fluid/rho) — the density observable (Mission
+            # 003: rho of the sample; Mission 004: rho of the ambient
+            # liquid, since the sample's density is the known standard).
             self.t.append(t)
             self.z.append(z)
             if z <= _TANK_FLOOR_TOP_Z + self._sample_radius:
@@ -319,7 +373,7 @@ class ExperimentSession:
 
         # Termination rules
         if (self._steps >= _MAX_STEPS
-                or (kind in ("drop_test", "buoyancy_test")
+                or (kind in ("drop_test", "buoyancy_test", "immersion_test")
                     and self._recorded_done)
                 or (kind == "drop" and self._recorded_done
                     and self._steps - self._contact_step >= _SETTLE_FRAMES)):
@@ -348,7 +402,7 @@ class Laboratory:
     def __init__(self, universe: Universe):
         self._universe = universe
         self.supported_experiments = ("drop", "drop_test", "slide_test",
-                                      "buoyancy_test")
+                                      "buoyancy_test", "immersion_test")
 
     @property
     def universe_name(self) -> str:

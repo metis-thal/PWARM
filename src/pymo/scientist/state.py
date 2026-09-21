@@ -30,6 +30,13 @@ DEFAULT_PRIOR_BOUNDS: dict[str, tuple[float, float]] = {
 
 _ABS_FLOOR = 1e-9
 
+# Genesis Phase 2 Step 2 — verification-learning rates (deterministic
+# metacognition, not Bayesian inference): a confirmation keeps this share
+# of the distance to each boundary; a refutation pads the surprise by this
+# share of the old span.
+_CONFIRM_KEEP = 0.75
+_REFUTED_PAD = 0.25
+
 
 @dataclass
 class Belief:
@@ -111,6 +118,46 @@ class ScientistState:
         rel_width = (belief.hi - belief.lo) / max(abs(estimate), _ABS_FLOOR)
         belief.status = "known" if rel_width <= _KNOWN_REL_WIDTH else "constrained"
         belief.reason = ""
+
+    def learn_from_verification(self, claim: str, status: str,
+                                observed: float, predicted: float,
+                                tolerance: float) -> bool:
+        """Genesis Phase 2 Step 2: fold one verification verdict back into
+        the self-model. Cognition updating, NOT law publication — the
+        knowledge base is untouched, and status transitions stay with
+        update / mark_unidentifiable.
+
+        CONFIRMED — the observation landed inside the committed band: pull
+        each boundary toward the observation, keeping ``_CONFIRM_KEEP`` of
+        the old distance. The interval stays inside the old one, narrows,
+        and still covers the observation.
+
+        REFUTED — the observation fell outside the band: widen the belief
+        until it covers the surprise (padded by ``_REFUTED_PAD`` of the old
+        span). The AI ends up LESS certain — the honest response to being
+        wrong, and it can never keep holding the exact same wrong belief.
+
+        Inputs are the existing belief, the verification's AI-side measured
+        value, and the committed prediction's reference points — never
+        universe truth. Deterministic: identical inputs, identical floats.
+        ``predicted``/``tolerance`` ride along as the event's provenance
+        (this step's rule reads only status + observed + current belief).
+        Returns True when the belief moved.
+        """
+        belief = self.beliefs.get(claim)
+        if belief is None:
+            return False
+        if status == "confirmed":
+            new_lo = observed - _CONFIRM_KEEP * (observed - belief.lo)
+            new_hi = observed + _CONFIRM_KEEP * (belief.hi - observed)
+        elif status == "refuted":
+            pad = _REFUTED_PAD * max(belief.span, _ABS_FLOOR)
+            new_lo = min(belief.lo, observed - pad)
+            new_hi = max(belief.hi, observed + pad)
+        else:
+            return False
+        belief.lo, belief.hi = new_lo, new_hi
+        return True
 
     def mark_unidentifiable(self, name: str, reason: str) -> None:
         belief = self.beliefs.get(name)

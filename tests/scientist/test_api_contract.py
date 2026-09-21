@@ -19,8 +19,8 @@ _SRC = Path(__file__).resolve().parents[2] / "src" / "pymo" / "scientist"
 # it must consume secrets to configure worlds but never re-export them.
 AI_MODULES = [
     "agent.py", "designer.py", "state.py", "planner.py", "mission.py",
-    "hypothesis.py", "knowledge.py", "information.py", "uncertainty.py",
-    "budget.py", "experiment_value.py", "instrument.py",
+    "hypothesis.py", "prediction.py", "knowledge.py", "information.py",
+    "uncertainty.py", "budget.py", "experiment_value.py", "instrument.py",
 ]
 
 

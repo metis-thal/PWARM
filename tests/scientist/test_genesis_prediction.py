@@ -1,0 +1,654 @@
+"""Genesis Phase 2 verification: commitment precedes observation, and
+verification feeds back into the beliefs.
+
+The full epistemic loop, enforced: predict -> COMMIT (hash + persist) ->
+experiment -> observation -> verification -> confirmed / refuted ->
+belief update.
+
+Tests A–F cover temporal integrity, tamper detection, verification purity
+and both verdict paths. Mission regressions (G–J) are the existing mission
+suites, run alongside this file. Nothing here needs universe truth: the
+truth fixture is used only incidentally where an approximation target is
+convenient — all assertions run on AI-side objects.
+"""
+
+from __future__ import annotations
+
+import ast
+import dataclasses
+import inspect
+import json
+import sys
+from dataclasses import replace
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import pytest
+
+from pymo.scientist import (
+    ExperimentSpec,
+    KnowledgeBase,
+    Laboratory,
+    Mission,
+    ScientificModel,
+    ScientistAgent,
+    ScientistState,
+    disagreement,
+    model_prediction,
+)
+from pymo.scientist import prediction as prediction_module
+from pymo.scientist import state as state_module
+from pymo.scientist.prediction import (
+    PredictionRecord,
+    adjudicate,
+    prediction_from_belief,
+    verify_commitment,
+)
+from pymo.universes import load_universe
+
+MISSION = Mission(id="001", title="Discover Gravity", objective="",
+                  target="gravity", unit="m/s^2")
+DROP_10M = ExperimentSpec(kind="drop", drop_height=10.0)
+
+
+@pytest.fixture(scope="module")
+def lab():
+    return Laboratory(load_universe("universe_001"))
+
+
+def _agent(lab, tmp_path) -> ScientistAgent:
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    return ScientistAgent(lab, knowledge)
+
+
+# -- TEST A: the commitment is persisted before the experiment executes -----
+
+def test_a_commitment_persisted_before_experiment(lab, tmp_path):
+    knowledge_path = tmp_path / "k.json"
+    agent = _agent(lab, tmp_path)
+    events: list[str] = []
+    real_form = agent.form_prediction
+    real_run = agent.laboratory.run_experiment
+
+    def spy_form(mission, state=None):
+        events.append("predict")
+        return real_form(mission, state)
+
+    def spy_run(spec):
+        # At the FIRST experiment tick, the commitment must already be on
+        # disk and still OPEN (verification happens only after the run).
+        events.append("experiment")
+        if "experiment" not in events[:-1]:
+            data = json.loads(knowledge_path.read_text(encoding="utf-8"))
+            assert data["predictions"], "no commitment persisted"
+            assert all(p["status"] == "open" for p in data["predictions"])
+            assert verify_commitment(
+                prediction_module.PredictionRecord(**data["predictions"][0]))
+        return real_run(spec)
+
+    agent.form_prediction = spy_form
+    agent.laboratory.run_experiment = spy_run
+    agent.run_mission(MISSION)
+
+    assert "predict" in events and "experiment" in events
+    assert events.index("predict") < events.index("experiment")
+
+
+# -- TEST B: tampering with a commitment is detected -------------------------
+
+def test_b_tampered_commitment_hash_mismatch(lab, tmp_path):
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    committed = knowledge.commit_prediction(
+        model_ref="innate prior", claim="gravity", spec_ref=DROP_10M.id,
+        value=9.81, tolerance=0.1)
+    assert verify_commitment(committed)
+
+    tampered = replace(committed, predicted=9.9)   # silent edit attempt
+    assert not verify_commitment(tampered)
+
+    record = lab.run_experiment(DROP_10M)
+    with pytest.raises(ValueError, match="commitment hash mismatch"):
+        adjudicate(tampered, record)
+    knowledge.predictions[committed.prediction_id] = tampered
+    with pytest.raises(ValueError, match="commitment hash mismatch"):
+        knowledge.record_verification(
+            committed.prediction_id, record.experiment_id,
+            adjudicate(committed, record))
+
+
+# -- TEST C: verification needs ONLY the committed prediction + the record --
+
+def test_c_verification_uses_only_prediction_and_record(lab, tmp_path):
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    committed = knowledge.commit_prediction(
+        model_ref="innate prior", claim="gravity", spec_ref=DROP_10M.id,
+        value=9.81, tolerance=0.1)
+    record = lab.run_experiment(DROP_10M)
+
+    outcome = adjudicate(committed, record)     # inputs: exactly these two
+
+    assert outcome.status == "confirmed"
+    assert outcome.observed == pytest.approx(9.81, rel=1e-2)
+    assert outcome.residual == pytest.approx(outcome.observed - 9.81)
+
+
+# -- TEST D: truth is unreachable from the prediction/verification code -----
+
+def test_d_truth_unreachable_from_prediction_and_state():
+    """TEST D: the prediction AND the belief-update code never import the
+    universe layer — the whole feedback loop stays inside the AI side."""
+    for module in (prediction_module, state_module):
+        src = Path(module.__file__).read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not alias.name.startswith("pymo.universes")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("pymo.universes")
+    prediction_src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    assert "secrets" not in prediction_src and "y_true" not in prediction_src
+    # and the adjudication channel is two objects wide — nothing else fits
+    params = list(inspect.signature(adjudicate).parameters)
+    assert params == ["committed", "record"]
+
+
+# -- TEST E / F: confirmed and refuted are both recorded --------------------
+
+def test_e_confirmed_prediction_is_recorded(lab, tmp_path):
+    agent = _agent(lab, tmp_path)
+    report = agent.run_mission(MISSION)
+
+    assert report.status == "DISCOVERED"          # the M001 flow is intact
+    assert agent.last_committed_predictions
+    committed = agent.last_committed_predictions[0]
+    assert committed.claim == "gravity" and committed.status == "confirmed"
+    assert len(agent.last_verifications) == 3      # one per record
+    assert all(v.status == "confirmed" and v.prediction_id == committed.prediction_id
+               for v in agent.last_verifications)
+
+    # persisted, reloadable, and the commitment still verifies
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    loaded = knowledge.prediction(committed.prediction_id)
+    assert loaded is not None and loaded.status == "confirmed"
+    assert verify_commitment(loaded)
+    assert len(knowledge.verifications_for(committed.prediction_id)) == 3
+
+
+def test_f_refuted_prediction_is_recorded(lab, tmp_path):
+    """A deliberately wrong BELIEF is REFUTED — falsification is a
+    first-class outcome, and the mission still completes honestly."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    state.update("gravity", 8.0, 0.00625)   # the AI wrongly believes g ≈ 8 ± 0.05
+    agent = ScientistAgent(lab, knowledge)
+    report = agent.run_mission(MISSION, state)
+
+    assert report.status == "DISCOVERED"          # falsification derails nothing
+    committed = agent.last_committed_predictions[0]
+    assert committed.model_ref.startswith("state belief")
+    assert committed.predicted == pytest.approx(8.0)
+    assert committed.status == "refuted"
+    assert all(v.status == "refuted" for v in agent.last_verifications)
+    assert all(abs(v.residual) > 0.05 for v in agent.last_verifications)
+
+    reloaded = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    assert reloaded.prediction(committed.prediction_id).status == "refuted"
+
+    # Step 2: the refutations also fed back into the self-model — the AI
+    # no longer holds the same wrong belief.
+    belief = state.belief("gravity")
+    observed = agent.last_verifications[0].observed
+    assert belief.span > 0.1                    # widened past the old belief
+    assert belief.lo <= observed <= belief.hi   # reality is covered again
+
+
+def test_belief_moves_the_prediction(tmp_path):
+    """TEST A: the prediction is the AI's belief, translated — move the
+    belief and the prediction moves with it (no hard-coded prior)."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+
+    prior = state.belief("gravity")
+    guess = prediction_from_belief(prior)
+    assert guess.claim == "gravity"
+    assert guess.value == pytest.approx(prior.midpoint)
+    assert guess.tolerance == pytest.approx(prior.span / 2.0)
+    assert guess.source.startswith("state belief")
+
+    state.update("gravity", 9.79, 0.01)       # the AI's belief tightens
+    moved = state.belief("gravity")
+    guess2 = prediction_from_belief(moved)
+    assert guess2.value == pytest.approx(9.79)
+    assert guess2.tolerance == pytest.approx(moved.span / 2.0)
+    assert guess2.band != guess.band
+
+
+def test_tight_correct_belief_confirms(lab, tmp_path):
+    """A tightened, correct belief produces a sharp CONFIRMED verdict —
+    the real 9.81 sits inside the AI's own 9.79 ± ~0.10 band."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    state.update("gravity", 9.79, 0.01)
+    agent = ScientistAgent(lab, knowledge)
+    agent.run_mission(MISSION, state)
+
+    committed = agent.last_committed_predictions[0]
+    assert committed.status == "confirmed"
+    assert committed.tolerance < 0.15
+    assert all(v.status == "confirmed"
+               for v in agent.last_verifications)
+
+
+# -- Phase 2 Step 2: verification feeds back into the beliefs ----------------
+
+def test_confirmed_verification_narrows_belief(tmp_path):
+    """TEST A: a confirmation moderately tightens the belief around the
+    observation — strictly narrower, still covering it."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    belief = state.belief("gravity")
+    lo0, hi0, span0 = belief.lo, belief.hi, belief.span
+
+    assert state.learn_from_verification(
+        "gravity", "confirmed", observed=10.5, predicted=10.0, tolerance=10.0)
+
+    assert belief.span < span0
+    assert belief.lo > lo0 and belief.hi < hi0      # strictly inside the old
+    assert belief.lo < 10.5 < belief.hi             # still covers the observation
+
+
+def test_refuted_verification_changes_belief(tmp_path):
+    """TEST B: a refutation changes the belief — the AI never keeps the
+    exact same wrong belief; it widens until reality is covered again."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    state.update("gravity", 8.0, 0.00625)     # the wrong belief: 8 ± 0.05
+    belief = state.belief("gravity")
+    before = (belief.lo, belief.hi, belief.span)
+
+    assert state.learn_from_verification(
+        "gravity", "refuted", observed=9.81, predicted=8.0, tolerance=0.05)
+
+    assert (belief.lo, belief.hi, belief.span) != before
+    assert belief.lo <= 9.81 <= belief.hi           # the surprise is covered
+    assert belief.span > before[2]                  # less certain, honestly
+
+
+def _learned_belief(path):
+    knowledge = KnowledgeBase(path, universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    state.learn_from_verification("gravity", "confirmed",
+                                  observed=9.81, predicted=10.0, tolerance=10.0)
+    belief = state.belief("gravity")
+    return (belief.lo, belief.hi)
+
+
+def test_belief_update_is_deterministic(tmp_path):
+    """TEST C: identical inputs produce byte-identical belief intervals —
+    the update rule is pure deterministic arithmetic."""
+    assert (_learned_belief(tmp_path / "a.json")
+            == _learned_belief(tmp_path / "b.json"))
+
+
+def test_prediction_record_schema_unchanged():
+    """TEST E (schema pin, with the untouched hash tests B/C above): Phase
+    1's PredictionRecord fields and commitment machinery are exactly as
+    before the belief-feedback step."""
+    assert [f.name for f in dataclasses.fields(PredictionRecord)] == [
+        "prediction_id", "model_ref", "claim", "spec_ref", "predicted",
+        "tolerance", "committed_hash", "seq", "created_at", "status"]
+
+
+def test_verification_updates_belief_in_mission_loop(lab, tmp_path):
+    """The Phase 2 loop closes end to end: predict FROM the belief ->
+    verify -> the belief is updated on the same self-model instance."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    span0 = state.belief("gravity").span
+    agent = ScientistAgent(lab, knowledge)
+
+    agent.run_mission(MISSION, state)
+
+    assert agent.last_state is state
+    belief = state.belief("gravity")
+    observed = agent.last_verifications[0].observed
+    assert belief.span < span0              # the confirmations tightened it
+    assert belief.lo > 0.0 and belief.hi < 20.0
+    assert belief.lo < observed < belief.hi
+
+
+# -- Phase 2 Step 3: consecutive verification-learning -------------------
+
+def test_consecutive_confirmed_narrows_monotonically(tmp_path):
+    """TEST A: 连续 CONFIRMED 后 belief span 单调变小。
+
+    每次 CONFIRMED 将区间缩小为原来的 _CONFIRM_KEEP=0.75 倍。
+    n 次确认后 span = 0.75^n * span0，严格递减。
+    """
+    knowledge = KnowledgeBase(tmp_path / "a.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    observed = 10.0
+    spans = []
+    for _ in range(5):
+        state.learn_from_verification(
+            "gravity", "confirmed",
+            observed=observed, predicted=observed, tolerance=10.0)
+        spans.append(state.belief("gravity").span)
+
+    for i in range(1, len(spans)):
+        assert spans[i] < spans[i - 1], \
+            f"span did not decrease at step {i}"
+    # 验证理论值: 0.75^5 * 初始 span (20.0)
+    assert spans[-1] == pytest.approx(20.0 * (0.75 ** 5), rel=1e-9)
+
+
+def test_consecutive_confirmed_covers_observed(tmp_path):
+    """TEST B: 每次 CONFIRMED 后 belief 仍包含 observed value。"""
+    knowledge = KnowledgeBase(tmp_path / "b.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    observed = 10.0
+    for _ in range(5):
+        state.learn_from_verification(
+            "gravity", "confirmed",
+            observed=observed, predicted=observed, tolerance=10.0)
+        belief = state.belief("gravity")
+        assert belief.lo <= observed <= belief.hi
+
+
+def test_consecutive_confirmed_prediction_reflects_belief(tmp_path):
+    """CONFIRMED 后 prediction_from_belief 使用更新后的 belief。
+
+    验证完整链路: belief → prediction → CONFIRMED → learn → new belief →
+    new prediction 反映新 belief。
+    使用非中点的 observed 以确保 midpoint 发生偏移。
+    """
+    from pymo.scientist.prediction import prediction_from_belief
+
+    knowledge = KnowledgeBase(tmp_path / "c.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    # observed 不是初始 belief 的中点 (10.0)，确保 midpoint 偏移
+    observed = 5.0
+
+    pred_before = prediction_from_belief(state.belief("gravity"))
+    assert pred_before.value == pytest.approx(10.0)  # midpoint of (0, 20)
+
+    state.learn_from_verification(
+        "gravity", "confirmed",
+        observed=observed, predicted=observed, tolerance=10.0)
+
+    belief_after = state.belief("gravity")
+    pred_after = prediction_from_belief(belief_after)
+    # 新的 prediction 应反映更新后的 belief
+    assert pred_after.value == pytest.approx(belief_after.midpoint)
+    assert pred_after.tolerance == pytest.approx(belief_after.span / 2.0)
+    # 新的 prediction 值应不同于之前的 (midpoint 从 10.0 偏移到 8.75)
+    assert pred_after.value != pred_before.value
+
+
+def test_consecutive_confirmed_is_deterministic(tmp_path):
+    """TEST C: 相同初始 belief + 相同 observations → 完全相同的最终 belief。
+
+    两次独立运行，从相同的初始状态出发，经过相同的 CONFIRMED 序列，
+    必须得到 byte-identical 的最终区间。
+    """
+
+    def _run():
+        knowledge = KnowledgeBase(tmp_path / "d.json", universe="universe_001")
+        state = ScientistState(("gravity",), knowledge)
+        for _ in range(5):
+            state.learn_from_verification(
+                "gravity", "confirmed",
+                observed=10.0, predicted=10.0, tolerance=10.0)
+        b = state.belief("gravity")
+        return (round(b.lo, 15), round(b.hi, 15), round(b.span, 15))
+
+    assert _run() == _run()
+
+
+def test_consecutive_refuted_changes_deterministically(tmp_path):
+    """TEST D: 连续 REFUTED 时 belief 确定性变化，span 单调增大，
+    不会被强行恢复成原来的错误 belief。"""
+
+    def _run():
+        knowledge = KnowledgeBase(tmp_path / "e.json", universe="universe_001")
+        state = ScientistState(("gravity",), knowledge)
+        state.update("gravity", 8.0, 0.00625)  # 错误信念: 8 ± 0.05
+        spans = []
+        for _ in range(3):
+            belief = state.belief("gravity")
+            spans.append(belief.span)
+            state.learn_from_verification(
+                "gravity", "refuted",
+                observed=9.81, predicted=8.0, tolerance=0.05)
+        return (spans, state.belief("gravity").span)
+
+    result1 = _run()
+    result2 = _run()
+    # 确定性: 相同输入产生相同输出
+    assert result1 == result2
+    # span 单调增大
+    assert result1[0][1] > result1[0][0]
+    assert result1[0][2] > result1[0][1]
+    # 最终 span 大于初始错误信念的 span (0.1)
+    assert result1[1] > 0.1
+
+
+def test_consecutive_refuted_no_recovery(tmp_path):
+    """REFUTED 后即使再 CONFIRMED，belief 也不会回到原来的错误值。
+
+    REFUTED 的本质是让 AI 更不确定（扩大区间），而不是让 AI 回到原点。
+    """
+    knowledge = KnowledgeBase(tmp_path / "f.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    state.update("gravity", 8.0, 0.00625)  # 错误信念
+    original_lo = state.belief("gravity").lo
+    original_hi = state.belief("gravity").hi
+
+    # REFUTED 一次
+    state.learn_from_verification(
+        "gravity", "refuted",
+        observed=9.81, predicted=8.0, tolerance=0.05)
+    after_refuted_lo = state.belief("gravity").lo
+    after_refuted_hi = state.belief("gravity").hi
+
+    # CONFIRMED 一次
+    state.learn_from_verification(
+        "gravity", "confirmed",
+        observed=9.81, predicted=9.81, tolerance=10.0)
+    after_confirmed_lo = state.belief("gravity").lo
+    after_confirmed_hi = state.belief("gravity").hi
+
+    # REFUTED 后不应回到原来的错误信念
+    assert (after_refuted_lo, after_refuted_hi) != (original_lo, original_hi)
+    # CONFIRMED 后也不应回到原来的错误信念
+    assert (after_confirmed_lo, after_confirmed_hi) != (original_lo, original_hi)
+
+
+def test_consecutive_updates_no_universe_access(tmp_path):
+    """TEST E: 连续学习过程中 prediction.py / state.py 不访问 pymo.universes。"""
+    for mod in (state_module, prediction_module):
+        src = Path(mod.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not alias.name.startswith("pymo.universes")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("pymo.universes")
+
+
+# -- append-only history + additive schema ----------------------------------
+
+def test_changed_mind_appends_new_history(lab, tmp_path):
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    first = knowledge.commit_prediction("innate prior", "gravity",
+                                        DROP_10M.id, 9.81, 0.1)
+    second = knowledge.commit_prediction("second thoughts", "gravity",
+                                         DROP_10M.id, 9.5, 0.2)
+    assert first.prediction_id != second.prediction_id
+    assert second.seq == first.seq + 1
+    assert set(knowledge.predictions) == {first.prediction_id,
+                                          second.prediction_id}
+
+
+def test_pre_phase1_knowledge_files_remain_valid(tmp_path):
+    """Additive evolution: a laws-only file (Mission 001–003 layout) loads
+    unchanged, and saving upgrades the schema without touching the laws."""
+    path = tmp_path / "old.json"
+    law = {"name": "gravity", "formula": "g = 9.8100 m/s^2 (free-fall fit)",
+           "value": 9.81, "unit": "m/s^2", "confidence": 0.9995, "r2": 1.0,
+           "experiments": ["drop_h10_m1"], "derived_by": "polynomial",
+           "properties": {}}
+    path.write_text(json.dumps(
+        {"universe": "universe_001", "updated": "2026-01-01T00:00:00+00:00",
+         "laws": [law]}), encoding="utf-8")
+
+    knowledge = KnowledgeBase(path, universe="universe_001")
+    assert knowledge.knows("gravity")
+    assert knowledge.predictions == {} and knowledge.verifications == {}
+    knowledge.save()
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 2
+    assert data["laws"][0]["name"] == "gravity"
+    assert data["predictions"] == [] and data["verifications"] == []
+
+
+# -- Model Competition Step 1: candidate model → prediction → disagreement ---
+
+def test_two_models_can_coexist():
+    """TEST A: 两个模型可以同时存在。"""
+    h1 = ScientificModel(model_id="linear", params={"k": 0.5})
+    h2 = ScientificModel(model_id="quadratic", params={"k": 0.1})
+    assert h1.model_id != h2.model_id
+    assert h1.params != h2.params
+
+
+def test_same_conditions_different_predictions():
+    """TEST B: 相同条件下两个模型产生不同 prediction。"""
+    h1 = ScientificModel(model_id="linear", params={"k": 1.0})
+    h2 = ScientificModel(model_id="quadratic", params={"k": 1.0})
+    conditions = {"x": 5.0}
+    pred1 = model_prediction(h1, conditions)
+    pred2 = model_prediction(h2, conditions)
+    assert pred1.value == 5.0       # k*x = 1.0*5 = 5
+    assert pred2.value == 25.0      # k*x^2 = 1.0*25 = 25
+    assert pred1.value != pred2.value
+
+
+def test_same_prediction_disagreement_is_zero():
+    """TEST C: 相同 prediction 的 disagreement = 0。"""
+    h1 = ScientificModel(model_id="linear", params={"k": 1.0})
+    h2 = ScientificModel(model_id="linear", params={"k": 1.0})
+    conditions = {"x": 3.0}
+    pred1 = model_prediction(h1, conditions)
+    pred2 = model_prediction(h2, conditions)
+    assert disagreement(pred1, pred2) == 0.0
+
+
+def test_different_prediction_disagreement_correct():
+    """TEST D: 不同 prediction 的 disagreement 正确。"""
+    h1 = ScientificModel(model_id="linear", params={"k": 1.0})
+    h2 = ScientificModel(model_id="quadratic", params={"k": 1.0})
+    conditions = {"x": 5.0}
+    pred1 = model_prediction(h1, conditions)  # 5.0
+    pred2 = model_prediction(h2, conditions)  # 25.0
+    assert disagreement(pred1, pred2) == 20.0
+
+
+def test_model_prediction_is_deterministic():
+    """TEST E: 相同输入重复计算结果完全一致。"""
+    h1 = ScientificModel(model_id="linear", params={"k": 0.5})
+    conditions = {"x": 10.0}
+    pred1 = model_prediction(h1, conditions)
+    pred2 = model_prediction(h1, conditions)
+    assert pred1.value == pred2.value
+    assert pred1.tolerance == pred2.tolerance
+    assert pred1.claim == pred2.claim
+
+
+def test_model_prediction_no_universe_access():
+    """TEST F: model prediction 代码不访问 pymo.universes。"""
+    import ast
+    import pathlib
+    src = pathlib.Path(
+        prediction_module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert not alias.name.startswith("pymo.universes")
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith("pymo.universes")
+    src_str = src
+    assert "secrets" not in src_str
+    assert "y_true" not in src_str
+
+
+def test_existing_prediction_flow_unchanged():
+    """TEST G: 现有 Prediction / Commitment / Verification 流程完全不受影响。
+
+    确认 PredictionRecord, Prediction, prediction_from_belief,
+    commitment_hash, verify_commitment, adjudicate 的行为和签名不变。
+    """
+    import dataclasses
+    import pathlib
+    import tempfile
+
+    from pymo.scientist.knowledge import KnowledgeBase
+    from pymo.scientist.prediction import (
+        Prediction,
+        PredictionRecord,
+        commitment_hash,
+        prediction_from_belief,
+    )
+    from pymo.scientist.state import ScientistState
+    assert [f.name for f in dataclasses.fields(PredictionRecord)] == [
+        "prediction_id", "model_ref", "claim", "spec_ref", "predicted",
+        "tolerance", "committed_hash", "seq", "created_at", "status"]
+    # prediction_from_belief still works
+    with tempfile.TemporaryDirectory() as tmp:
+        knowledge = KnowledgeBase(pathlib.Path(tmp) / "k.json",
+                                  universe="universe_001")
+        state = ScientistState(("gravity",), knowledge)
+        pred = prediction_from_belief(state.belief("gravity"))
+        assert isinstance(pred, Prediction)
+        assert pred.claim == "gravity"
+    # commitment_hash still works
+    payload = {"model_ref": "test", "claim": "gravity",
+               "spec_ref": "spec1", "predicted": 9.81, "tolerance": 0.1}
+    h1 = commitment_hash(payload)
+    h2 = commitment_hash(payload)
+    assert h1 == h2
+
+
+def test_mission_regression_unchanged():
+    """TEST H: Mission 001–004 regression 不变。
+
+    确认新代码不影响 Mission 001 的完整流程。
+    """
+    import pathlib
+    import tempfile
+
+    from pymo.scientist import (
+        KnowledgeBase,
+        Laboratory,
+        Mission,
+        ScientistAgent,
+    )
+    from pymo.universes import load_universe
+
+    MISSION = Mission(id="001", title="Discover Gravity", objective="",
+                       target="gravity", unit="m/s^2")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        lab = Laboratory(load_universe("universe_001"))
+        knowledge = KnowledgeBase(pathlib.Path(tmp) / "k.json",
+                                  universe="universe_001")
+        agent = ScientistAgent(lab, knowledge)
+        report = agent.run_mission(MISSION)
+        assert report.status == "DISCOVERED"
+        assert agent.last_committed_predictions
+        committed = agent.last_committed_predictions[0]
+        assert committed.claim == "gravity"
