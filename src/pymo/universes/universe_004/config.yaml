@@ -1,0 +1,19 @@
+# Universe 004 — "Liquid World" (Mission 004: Fluid & Thermodynamics, Day 1)
+#
+# The whole laboratory is submerged in an ambient liquid whose density is
+# this world's hidden truth. Day 1 scope is the measurement infrastructure
+# only: the immersion apparatus (a certified reference sphere of KNOWN
+# density — an instrument specification, like Mission 003's water tank)
+# releases the sample below the surface; the descent record (t, z) is the
+# deliverable. No derive, no law discovery, no designer wiring yet.
+
+name: Liquid World
+
+gravity:
+  hidden: true
+  value: 9.81
+
+materials:
+  hidden: true
+  ambient_fluid:
+    density: 850        # oil-like unknown liquid — physics-side truth only

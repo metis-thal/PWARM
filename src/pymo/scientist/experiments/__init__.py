@@ -7,12 +7,14 @@ kinds to their modules; the designer scores designs by expected information
 gain, the laboratory executes them, and the modules derive the physics.
 """
 
-from . import buoyancy_test, drop_test, slide_test
+from . import buoyancy_test, drop_test, immersion_test, slide_test
 
 REGISTRY = {
     drop_test.KIND: drop_test,
     slide_test.KIND: slide_test,
     buoyancy_test.KIND: buoyancy_test,
+    immersion_test.KIND: immersion_test,
 }
 
-__all__ = ["REGISTRY", "buoyancy_test", "drop_test", "slide_test"]
+__all__ = ["REGISTRY", "buoyancy_test", "drop_test", "immersion_test",
+           "slide_test"]

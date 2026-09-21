@@ -1,0 +1,9 @@
+Mission 004 Day 1 reproduction
+universe: universe_004 (Liquid World); instrument: immersion rig
+design grid: immersion_test depths (1.0, 2.0, 4.0)
+  immersion_test_d1: 81 steps, 81 samples, z 6.998 -> 0.799
+  immersion_test_d2: 75 steps, 75 samples, z 5.998 -> 0.679
+  immersion_test_d4: 59 steps, 59 samples, z 3.998 -> 0.695
+deterministic: two identical runs -> byte-identical ObservationRecords: OK
+records written to reproducibility/mission_004_day1/results/records.json
+(measurement data only - no universe secrets)

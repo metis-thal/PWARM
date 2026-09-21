@@ -1,0 +1,29 @@
+# Mission 004 Day 1 — "Liquid World" measurement infrastructure
+# (reproduction envelope; NO Mission 004 CLI exists yet by design —
+# run.sh drives the existing test/experiment entries directly)
+
+mission: "004 (Day 1)"
+universe: universe_004            # "Liquid World"
+
+hidden:                           # names only — values are physics-side secrets
+  - gravity                       # 9.81
+  - ambient_fluid.density         # the unknown liquid (850, oil-like)
+
+instruments:
+  - immersion_rig:                  # Day 1 apparatus
+      sample: certified reference sphere (KNOWN density 2700 kg/m^3 —
+              instrument standard, not a universe secret)
+      design_space: release depth {1, 2, 4} m below the surface
+      physics: existing hydrostatic buoyancy (Mission 003's verified
+              mechanism — no new physics)
+
+day1_scope:                       # measurement infrastructure ONLY
+  - immersion_test -> ExperimentSession -> ObservationRecord (t, z)
+  - no derive / claim routing / law discovery (Day 2)
+  - no designer / information / instrument wiring
+
+reproduction_target: >
+  same config + same design grid -> byte-identical ObservationRecords
+  (run.sh executes the grid twice and requires exact equality)
+
+knowledge_policy: measurement-only (fresh)
