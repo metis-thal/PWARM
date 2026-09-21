@@ -20,8 +20,6 @@ Physical World AI Reasoning Model
 
 **核心原则：AI 可以观察世界，但不能读取答案。**
 **Core principle: the AI may observe the world, but it can never read the answers.**
-
-
 ---
 
 ## Mission 001 — AI 能否在不知道重力值的情况下发现重力？/ Can an AI discover gravity without being told its value?
@@ -44,15 +42,7 @@ AI 科学家从三个不同高度落下小球，将每条轨迹拟合为二次�
 
 ---
 
-## 为什么选择 PWARM？/ Why PWARM?
 
-**物理是真实的。** 所有现象从底层微分方程中涌现——没有硬编码的动画，没有预设事件。AI 只能看到测量通道提供的信息。
-
-**科学是诚实的。** AI 无法作弊。它通过科学方法获取知识：规划→执行→观察→假设→验证→发表。它不能知道的，就诚实承认——Mission 002 的 `UNIDENTIFIABLE` 密度报告和 Mission 003 的仪器申请弧线是本项目的核心展示，而非脚注。
-
-**进展是渐进的。** 每个 Mission 增加一个新能力。AI 的世界随着方法的成熟而变得丰富。
-
----
 
 ## 快速开始 / Quick Start
 
@@ -210,22 +200,13 @@ src/pymo/
 │               # URDF/MJCF/GLTF parsers, GUI, Sensors, Parallel envs
 ├── scientist/  # AI 科学家层
 │               # The AI scientist layer
-│   ├── state.py # 自我模型：不确定度区间 + 状态
-│   │            # Self-model: uncertainty intervals + statuses
-│   ├── prediction.py # 预测、承诺、验证、候选模型
-│   │               # Prediction, commitment, verification, ScientificModel
-│   ├── state.py # 自我模型：不确定度区间 + 状态
-│   │            # Self-model: uncertainty intervals + statuses
-│   ├── information.py # 测量分辨率模型
-│   │            # Measurement resolution models
-│   ├── designer.py # 按价值 = 增益 / 成本选择实验
-│   │            # Choose experiments by value = gain / cost
-│   ├── budget.py + experiment_value.py # 预算账本 + 价值排序
-│   │            # Budget ledger + value ranking
-│   ├── instrument.py # 缺口分析 → 申请 → 目录授权
-│   │            # Gap analysis → request → catalog grant
-│   └── experiments/ # 落体测试、滑动测试、浮力测试
-│                   # drop_test, slide_test, buoyancy_test
+│   ├── state.py # 自我模型：不确定度区间 + 状态 / Self-model: uncertainty intervals + statuses
+│   ├── prediction.py # 预测、承诺、验证、候选模型 / Prediction, commitment, verification, ScientificModel
+│   ├── information.py # 测量分辨率模型 / Measurement resolution models
+│   ├── designer.py # 按价值 = 增益 / 成本选择实验 / Choose experiments by value = gain / cost
+│   ├── budget.py + experiment_value.py # 预算账本 + 价值排序 / Budget ledger + value ranking
+│   ├── instrument.py # 缺口分析 → 申请 → 目录授权 / Gap analysis → request → catalog grant
+│   └── experiments/ # 落体测试、滑动测试、浮力测试 / drop_test, slide_test, buoyancy_test
 └── viz/        # OpenGL GPU 实例化、PBR、光线追踪
                 # OpenGL GPU instancing, PBR, ray-tracing
 ```

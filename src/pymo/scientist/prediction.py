@@ -116,8 +116,7 @@ def disagreement(prediction_a: Prediction,
     return abs(prediction_a.value - prediction_b.value)
 
 
-# -- Existing code continues below ---
-
+# -- Prediction, Commitment, Verification (Phase 1 + Phase 2) ----------
 
 @dataclass(frozen=True)
 class Prediction:
