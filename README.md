@@ -21,36 +21,6 @@ Physical World AI Reasoning Model
 **核心原则：AI 可以观察世界，但不能读取答案。**
 **Core principle: the AI may observe the world, but it can never read the answers.**
 
----
-
-## 60 秒看到它工作 / See it work in 60 seconds
-
-```bash
-git clone https://github.com/metis-thal/PWARM.git
-cd PWARM && pip install -e .
-pwarm demo          # 或 / or: make demo
-```
-
-无 GPU、无窗口、纯终端：AI 科学家规划三次落体、拟合轨迹、交叉验证、发表知识。
-
-```text
-======================================================================
-   PWARM MISSION 001 — DISCOVER GRAVITY
-======================================================================
-
-Universe: Unknown Planet
-Hidden gravity:  ????            (the AI is not told)
-
-    drop_h10_m1:  g ≈ 9.80999 m/s^2   (R^2 = 1.0000)
-    drop_h20_m1:  g ≈ 9.80999 m/s^2   (R^2 = 1.0000)
-    drop_h5_m1:   g ≈ 9.81000 m/s^2   (R^2 = 1.0000)
-
-   DISCOVERY CONFIRMED
-Ground truth (narrator only): 9.81 m/s^2 · error 0.0001%
-```
-
-`pwarm demo 002` 看自主实验设计与诚实的 UNIDENTIFIABLE 报告；
-`pwarm demo 003` 看预算约束与完整的仪器申请弧线。
 
 ---
 
@@ -105,7 +75,7 @@ pip install -e ".[dev]"     # 开发 / development
 pwarm demo                  # Mission 001 — discover gravity
 pwarm demo 002              # Mission 002 — autonomous experiments + honest unknowns
 pwarm demo 003              # Mission 003 — budget + instrument request arc
-make test                   # 76 tests
+make test                   # 56 tests
 make repro                  # regenerate every reproducibility envelope
 
 # GL 仪表盘（需要窗口）/ GL dashboards (need a window):
@@ -116,10 +86,18 @@ python scripts/demo_mission_003.py
 
 ```python
 from pymo.scientist import ScientistAgent, ScientistState, Mission
+from pymo.scientist import ScientificModel, model_prediction, disagreement
 from pymo.universes import load_universe
 
 universe = load_universe("universe_001")
 # AI 自主发现隐藏在其中的东西。
+
+# 候选模型：两个假设同时预测
+h1 = ScientificModel(model_id="linear", params={"k": 0.5})
+h2 = ScientificModel(model_id="quadratic", params={"k": 0.1})
+pred_a = model_prediction(h1, {"x": 5.0})
+pred_b = model_prediction(h2, {"x": 5.0})
+D = disagreement(pred_a, pred_b)  # 只产出 prediction 和 disagreement
 ```
 
 ---
@@ -189,6 +167,23 @@ Budget → Value Ranking → Experiment → Gap Analysis → Instrument Request 
 - **Mission 005+**: 化学、材料、光学、地质学
 - **Mission 005+**: Chemistry, Materials, Optics, Geology
 
+### Model Competition — 候选模型竞争
+
+PWARM 的 AI 科学家可以同时表示多个候选模型（`ScientificModel`），在相同实验条件下各自计算 prediction，并计算两者之间的 disagreement。
+
+```
+Model A → prediction A
+Model B → prediction B
+disagreement → D
+```
+
+当前阶段只产出 prediction 和 disagreement，**不判断哪个模型正确**。模型竞争的后续步骤（discriminating experiment → observation → verification → model survives/refuted）留给未来阶段。
+
+核心组件：
+- `ScientificModel` — 候选模型（model_id + params）
+- `model_prediction(model, conditions)` — 纯函数计算 prediction
+- `disagreement(pred_a, pred_b)` — 确定性 disagreement（绝对差值）
+
 ---
 
 ## 架构 / Architecture
@@ -215,6 +210,10 @@ src/pymo/
 │               # URDF/MJCF/GLTF parsers, GUI, Sensors, Parallel envs
 ├── scientist/  # AI 科学家层
 │               # The AI scientist layer
+│   ├── state.py # 自我模型：不确定度区间 + 状态
+│   │            # Self-model: uncertainty intervals + statuses
+│   ├── prediction.py # 预测、承诺、验证、候选模型
+│   │               # Prediction, commitment, verification, ScientificModel
 │   ├── state.py # 自我模型：不确定度区间 + 状态
 │   │            # Self-model: uncertainty intervals + statuses
 │   ├── information.py # 测量分辨率模型
@@ -252,10 +251,9 @@ make repro                   # 重新生成全部可复现性档案 / regenerate
 
 | 测试套件 / Test Suite | 测试数 / Tests | 状态 / Status |
 |-----------------------|---------------|---------------|
-| Mission 001–003 scientist | 21 | ✅ 全部通过 |
-| AI↔Physics contract | 4 | ✅ 全部通过 |
-| Reproducibility envelopes | 6 | ✅ 全部通过 |
+| Scientist (Mission 001–004 + genesis) | 56 | ✅ 全部通过 |
 | Engine / geology / viz / rules | 45 | ✅ 全部通过 (3 skip) |
+| Reproducibility envelopes | 6 | ✅ 全部通过 |
 
 每个 Mission 附带可复现档案
 [`reproducibility/mission_XXX/`](reproducibility/)（config · seed · run.sh ·
