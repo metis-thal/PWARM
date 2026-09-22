@@ -168,6 +168,35 @@ def rank_discriminating_conditions(
     return sorted(comparisons, key=lambda c: c.disagreement, reverse=True)
 
 
+# -- Genesis Step 4.5: condition binding (model variable -> spec parameter) -
+
+@dataclass(frozen=True)
+class ConditionBinding:
+    """Explicit AI-side contract between the two condition vocabularies:
+    which ExperimentSpec parameter each model condition variable means.
+
+    Binding is DECLARED data, never guessed — an unmapped model variable
+    is refused loudly, and nothing here knows about hidden truths or
+    experimental results: it only renames condition keys.
+    """
+
+    mapping: dict[str, str]     # model variable -> ExperimentSpec parameter
+
+    def translate(self, conditions: dict[str, float]) -> dict[str, float]:
+        """Rename model-vocabulary conditions into spec parameters.
+
+        Refuses, loudly, any variable the binding does not cover —
+        silence would be a guessed conversion.
+        """
+        unmapped = [key for key in conditions if key not in self.mapping]
+        if unmapped:
+            raise ValueError(
+                f"condition variable(s) {sorted(unmapped)} are not bound "
+                f"to experiment parameters; binding covers "
+                f"{sorted(self.mapping)}")
+        return {self.mapping[key]: value for key, value in conditions.items()}
+
+
 # -- Prediction, Commitment, Verification (Phase 1 + Phase 2) ----------
 
 @dataclass(frozen=True)

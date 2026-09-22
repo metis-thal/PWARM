@@ -27,11 +27,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pytest
 
 from pymo.scientist import (
+    ConditionBinding,
     ConditionComparison,
     ExperimentSpec,
     KnowledgeBase,
     Laboratory,
     Mission,
+    ObservationRecord,
     ScientificModel,
     ScientistAgent,
     ScientistState,
@@ -39,9 +41,12 @@ from pymo.scientist import (
     model_prediction,
     rank_discriminating_conditions,
 )
+from pymo.scientist import agent as agent_module
 from pymo.scientist import prediction as prediction_module
 from pymo.scientist import state as state_module
+from pymo.scientist.agent import proposal_to_spec
 from pymo.scientist.prediction import (
+    Prediction,
     PredictionRecord,
     adjudicate,
     prediction_from_belief,
@@ -749,3 +754,291 @@ def test_ranking_inputs_are_models_and_conditions_only():
     assert params == ["models", "candidate_conditions"]
     with pytest.raises(ValueError, match="at least one candidate model"):
         rank_discriminating_conditions((), [{"x": 1.0}])
+
+
+# -- Model Competition Step 3: the agent proposes, nothing executes ----------
+
+def test_agent_proposes_most_discriminating_condition(lab, tmp_path):
+    """The suggestion IS the top-ranked comparison: x=5 over x=1/x=2."""
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 1.0}, {"x": 2.0}, {"x": 5.0}])
+    assert proposal is not None
+    assert proposal.conditions == (("x", 5.0),)
+    assert proposal.disagreement == 20.0
+    assert proposal.predictions[0][0] == "linear"
+
+
+def test_agent_proposes_none_when_models_agree(lab, tmp_path):
+    """No condition separates identical models — an honest None, never a
+    fabricated suggestion."""
+    agent = _agent(lab, tmp_path)
+    h1 = ScientificModel(model_id="linear", params={"k": 1.0})
+    h2 = ScientificModel(model_id="linear", params={"k": 1.0})
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 2.0}, {"x": 5.0}])
+    assert proposal is None
+
+
+def test_agent_proposes_none_without_candidates(lab, tmp_path):
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()
+    assert agent.propose_discriminating_experiment((h1, h2), []) is None
+
+
+def test_proposal_is_pre_experimental(lab, tmp_path):
+    """The boundary holds at the proposal stage: physics is never called,
+    no prediction is committed, no belief or ledger state changes."""
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 2.0}, {"x": 5.0}])
+
+    assert proposal is not None
+    assert calls == []                              # physics never ran
+    assert agent.knowledge.predictions == {}        # nothing committed
+    assert agent.last_predictions == []
+    assert agent.last_committed_predictions == []
+    assert agent.last_verifications == []
+
+
+# -- Model Competition Step 4: proposal -> Laboratory -> Observation ---------
+#
+# The single sanctioned crossing: the AI-side proposal is translated into
+# the existing ExperimentSpec contract and the Laboratory runs it ONCE.
+# No verdict, no belief update, no knowledge write — those are later steps.
+
+def _drop_height_proposal(drop_height: float) -> ConditionComparison:
+    """A proposal whose winning condition is a drop height, hand-built the
+    way the AI would hold it after ranking. (Step 2 verified the ranking
+    itself; here the models' own prediction vocabulary and the
+    experiment-parameter vocabulary meet only in the condition dict.)"""
+    predictions = (
+        ("linear", Prediction(claim="linear", value=drop_height,
+                              tolerance=1.0, source="model linear")),
+        ("quadratic", Prediction(claim="quadratic", value=drop_height ** 2,
+                                 tolerance=1.0, source="model quadratic")),
+    )
+    return ConditionComparison(
+        conditions=(("drop_height", drop_height),),
+        predictions=predictions,
+        disagreement=drop_height ** 2 - drop_height,
+    )
+
+
+def test_proposal_executes_once_through_laboratory(lab, tmp_path):
+    """TESTS A+B: a valid proposal crosses into the Laboratory and the
+    result is the existing ObservationRecord type, produced through the
+    standard (proposal, kind) channel."""
+    import inspect
+    agent = _agent(lab, tmp_path)
+    proposal = _drop_height_proposal(5.0)
+
+    record = agent.execute_proposal(proposal, kind="drop")
+
+    assert isinstance(record, ObservationRecord)    # the existing type
+    assert record.experiment_id == "drop_h5_m1"     # conditions became the spec
+    assert len(record.t) > 10
+    # the channel is exactly (proposal, kind, binding) — nothing else can
+    # be passed (bound method: self does not appear in the signature)
+    assert list(inspect.signature(
+        agent.execute_proposal).parameters) == ["proposal", "kind", "binding"]
+
+
+def test_condition_actually_drives_the_experiment(lab, tmp_path):
+    """TEST C: the proposal's condition reaches physics — different
+    drop heights give records starting at their own heights."""
+    agent = _agent(lab, tmp_path)
+    low = agent.execute_proposal(_drop_height_proposal(2.0), kind="drop")
+    high = agent.execute_proposal(_drop_height_proposal(5.0), kind="drop")
+    assert low.z[0] == pytest.approx(2.0, abs=0.1)
+    assert high.z[0] == pytest.approx(5.0, abs=0.1)
+    assert low.z[0] != high.z[0]
+
+
+def test_execution_writes_no_truth_back_into_proposal(lab, tmp_path):
+    """TEST D: the proposal is frozen AI-side history — executing it
+    changes neither its conditions, predictions, nor disagreement; and
+    the record carries no truth vocabulary."""
+    agent = _agent(lab, tmp_path)
+    proposal = _drop_height_proposal(5.0)
+    before = proposal
+
+    record = agent.execute_proposal(proposal, kind="drop")
+
+    assert proposal == before                       # frozen artifact intact
+    assert "gravity" not in record.experiment_id
+    assert set(record.field_names) <= {"t", "z", "vx"}
+
+
+def test_execution_channel_stays_ai_side():
+    """TEST E: the whole crossing lives in AI-side modules — agent.py
+    still never imports the universe layer."""
+    src = Path(agent_module.__file__).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert not alias.name.startswith("pymo.universes")
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith("pymo.universes")
+
+
+def test_no_verdict_no_belief_no_ledger(lab, tmp_path):
+    """TESTS F+G+H: execution ends at the record — no model verdict, no
+    belief change, no knowledge-base prediction/verification writes."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    span_before = state.belief("gravity").span
+    agent = ScientistAgent(lab, knowledge)
+    proposal = _drop_height_proposal(5.0)
+
+    agent.execute_proposal(proposal, kind="drop")
+
+    assert state.belief("gravity").span == span_before                     # G
+    assert knowledge.predictions == {} and knowledge.verifications == {}   # H
+    assert agent.last_verifications == []                                  # F
+    assert agent.last_committed_predictions == []                          # F
+
+
+def test_execution_is_single_and_reproducible(lab, tmp_path):
+    """TESTS I+J: one proposal -> exactly one experiment per execution,
+    and the same proposal under the same configuration reproduces
+    byte-identically."""
+    agent = _agent(lab, tmp_path)
+    proposal = _drop_height_proposal(5.0)
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    first = agent.execute_proposal(proposal, kind="drop")
+    second = agent.execute_proposal(proposal, kind="drop")
+
+    assert len(calls) == 2                        # one per execution, no more
+    assert calls[0] == calls[1]                   # identical spec both times
+    assert list(first.t) == list(second.t)
+    assert list(first.z) == list(second.z)
+
+
+# -- Genesis Step 4.5: condition binding (model variable -> spec parameter) --
+
+_BINDING = ConditionBinding({"x": "drop_height"})
+
+
+def test_full_chain_from_model_to_observation(lab, tmp_path):
+    """The complete automatic chain, no hand-built artifacts:
+    ScientificModel -> model_prediction -> rank_discriminating_conditions
+    -> agent proposal -> binding -> ExperimentSpec -> Laboratory ->
+    ObservationRecord."""
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()          # y = k*x vs y = k*x^2, condition "x"
+
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 1.0}, {"x": 5.0}])
+    record = agent.execute_proposal(proposal, kind="drop", binding=_BINDING)
+
+    assert isinstance(record, ObservationRecord)
+    assert record.experiment_id == "drop_h5_m1"   # x=5 became drop_height=5
+    assert record.z[0] == pytest.approx(5.0, abs=0.1)
+
+
+def test_binding_maps_x_to_drop_height():
+    """TEST A: the binding renames exactly as declared."""
+    assert _BINDING.translate({"x": 5.0}) == {"drop_height": 5.0}
+
+
+def test_unbound_variable_refused_not_silently_accepted():
+    """TEST B: a variable the binding does not cover is a loud error; so
+    is a binding target outside the spec parameter whitelist."""
+    with pytest.raises(ValueError, match="not bound"):
+        _BINDING.translate({"y": 5.0})
+    with pytest.raises(ValueError, match="not ExperimentSpec parameters"):
+        proposal_to_spec(
+            ConditionComparison(conditions=(("x", 5.0),), predictions=(),
+                                disagreement=3.0),
+            kind="drop", binding=ConditionBinding({"x": "temperature"}))
+
+
+def test_binding_is_deterministic():
+    """TEST C: identical binding + conditions -> identical translation."""
+    assert (_BINDING.translate({"x": 5.0})
+            == _BINDING.translate({"x": 5.0}))
+
+
+def test_binding_leaves_proposal_untouched(lab, tmp_path):
+    """TEST D: translation reads the proposal, never writes it — the
+    proposal keeps the model's own condition vocabulary ("x")."""
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 1.0}, {"x": 5.0}])
+    before = proposal
+
+    agent.execute_proposal(proposal, kind="drop", binding=_BINDING)
+
+    assert proposal == before
+    assert proposal.conditions == (("x", 5.0),)   # still model vocabulary
+
+
+def test_laboratory_still_receives_standard_spec(lab, tmp_path):
+    """TEST E: physics still only sees the existing ExperimentSpec through
+    the existing run_experiment entry — the binding exists AI-side only."""
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    agent.execute_proposal(proposal, kind="drop", binding=_BINDING)
+
+    assert calls == [ExperimentSpec(kind="drop", drop_height=5.0)]
+
+
+def test_binding_channel_is_truth_free():
+    """TEST F: the binding carries only declared names, and the AI-side
+    modules it lives in stay universe-free."""
+    assert _BINDING.mapping == {"x": "drop_height"}
+    for module in (prediction_module, agent_module):
+        src = Path(module.__file__).read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not alias.name.startswith("pymo.universes")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("pymo.universes")
+
+
+def test_binding_execution_verifies_nothing(lab, tmp_path):
+    """TESTS G+H: execution still ends at the record — no model
+    verification, no belief change, no knowledge write."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    span_before = state.belief("gravity").span
+    agent = ScientistAgent(lab, knowledge)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+
+    agent.execute_proposal(proposal, kind="drop", binding=_BINDING)
+
+    assert knowledge.verifications == {} and knowledge.predictions == {}   # H
+    assert agent.last_verifications == []                                  # G
+    assert state.belief("gravity").span == span_before                     # H

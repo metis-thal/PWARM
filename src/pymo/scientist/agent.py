@@ -14,6 +14,8 @@ executes them, the AI observes results. The agent's only data channel is
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from .budget import ExperimentBudget
 from .designer import ExperimentDesigner
 from .experiment import ExperimentSpec, Laboratory, ObservationRecord
@@ -24,11 +26,15 @@ from .knowledge import KnowledgeBase
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
 from .prediction import (
+    ConditionBinding,
+    ConditionComparison,
     Prediction,
     PredictionRecord,
+    ScientificModel,
     VerificationRecord,
     adjudicate,
     prediction_from_belief,
+    rank_discriminating_conditions,
 )
 from .state import ScientistState
 
@@ -47,6 +53,38 @@ def _evidence(records: list[ObservationRecord],
                  "formula": h.formula, "experiment_id": h.experiment_id}
             for h in hypotheses]
     return observations, hyps
+
+# Proposal -> ExperimentSpec translation (Model Competition Step 4): the
+# AI-side half of crossing the boundary. ExperimentSpec is the existing
+# AI->physics contract carrier, so no new channel is invented and the
+# physics side needs no knowledge of AI modules.
+
+_SPEC_CONDITIONS = frozenset(
+    {"drop_height", "mass", "radius", "v0"})   # numeric spec parameters
+
+
+def proposal_to_spec(proposal: ConditionComparison,
+                     kind: str,
+                     binding: ConditionBinding | None = None) -> ExperimentSpec:
+    """Translate an AI-side proposal into the standard experiment contract.
+
+    Conditions must end up naming numeric ExperimentSpec parameters, via
+    one of two honest paths: the proposal already uses spec vocabulary,
+    or an explicit :class:`ConditionBinding` renames the model's condition
+    variables into it. Unknown keys are refused instead of silently
+    ignored — a condition either drives the experiment or the proposal
+    is rejected.
+    """
+    conditions = dict(proposal.conditions)
+    if binding is not None:
+        conditions = binding.translate(conditions)
+    unknown = set(conditions) - _SPEC_CONDITIONS
+    if unknown:
+        raise ValueError(
+            f"proposal conditions {sorted(unknown)} are not ExperimentSpec "
+            f"parameters; valid: {sorted(_SPEC_CONDITIONS)}")
+    return ExperimentSpec(kind=kind, **conditions)
+
 
 class ScientistAgent:
     """An autonomous scientist working in an unknown universe."""
@@ -163,6 +201,40 @@ class ScientistAgent:
                     observed=verification.observed,
                     predicted=prediction.predicted,
                     tolerance=prediction.tolerance)
+
+    # -- Model Competition Step 3: the AI proposes, physics will execute ----
+
+    def propose_discriminating_experiment(
+            self, models: Sequence[ScientificModel],
+            candidate_conditions: Sequence[dict[str, float]],
+    ) -> ConditionComparison | None:
+        """The AI's experiment SUGGESTION from model competition: the
+        candidate condition under which the rival models diverge most.
+
+        This stays on the AI side of the boundary — nothing runs here, no
+        commitment is made, no belief changes. The proposal becomes an
+        observation only when a later step takes it through the
+        Laboratory. Returns None honestly when no candidate can separate
+        the models (all disagreements zero, or no candidates given).
+        """
+        ranked = rank_discriminating_conditions(models, candidate_conditions)
+        if not ranked or ranked[0].disagreement == 0.0:
+            return None
+        return ranked[0]
+
+    def execute_proposal(self, proposal: ConditionComparison,
+                         kind: str,
+                         binding: ConditionBinding | None = None,
+                         ) -> ObservationRecord:
+        """Cross the boundary ONCE for this proposal: translate it into
+        the standard ExperimentSpec contract (optionally through an
+        explicit condition binding) and let the Laboratory run it.
+        Physics executes exactly one experiment and returns its
+        ObservationRecord — nothing more happens in this step: no model
+        verdict, no belief update, no knowledge write.
+        """
+        spec = proposal_to_spec(proposal, kind, binding)
+        return self.laboratory.run_experiment(spec)
 
     # -- the mission loop ------------------------------------------------------
 

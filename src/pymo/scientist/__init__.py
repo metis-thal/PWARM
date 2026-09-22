@@ -21,6 +21,7 @@ from .knowledge import KnowledgeBase, LawRecord
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
 from .prediction import (
+    ConditionBinding,
     ConditionComparison,
     ScientificModel,
     disagreement,
@@ -32,6 +33,7 @@ from .uncertainty import certainty_class, relative_width, total_uncertainty
 
 __all__ = [
     "REGISTRY",
+    "ConditionBinding",
     "ConditionComparison",
     "ExperimentBudget",
     "ExperimentDesigner",
