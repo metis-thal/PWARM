@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pytest
 
 from pymo.scientist import (
+    ConditionComparison,
     ExperimentSpec,
     KnowledgeBase,
     Laboratory,
@@ -36,6 +37,7 @@ from pymo.scientist import (
     ScientistState,
     disagreement,
     model_prediction,
+    rank_discriminating_conditions,
 )
 from pymo.scientist import prediction as prediction_module
 from pymo.scientist import state as state_module
@@ -652,3 +654,98 @@ def test_mission_regression_unchanged():
         assert agent.last_committed_predictions
         committed = agent.last_committed_predictions[0]
         assert committed.claim == "gravity"
+
+
+# -- Model Competition Step 2: discriminating conditions ---------------------
+#
+# Pre-experimental only: rank candidate conditions by how far the rival
+# models' predictions diverge. No execution, no observation, no verdict.
+
+def _rival_pair(k: float = 1.0) -> tuple[ScientificModel, ScientificModel]:
+    """Step-1's test models: H1 y=k*x vs H2 y=k*x^2."""
+    return (ScientificModel(model_id="linear", params={"k": k}),
+            ScientificModel(model_id="quadratic", params={"k": k}))
+
+
+def test_multiple_conditions_yield_multiple_comparisons():
+    """TEST A: two models x several conditions -> several comparisons."""
+    h1, h2 = _rival_pair()
+    ranked = rank_discriminating_conditions(
+        (h1, h2), [{"x": 1.0}, {"x": 2.0}, {"x": 5.0}])
+    assert len(ranked) == 3
+    assert all(isinstance(r, ConditionComparison) for r in ranked)
+    assert all(len(r.predictions) == 2 for r in ranked)
+
+
+def test_identical_models_zero_disagreement():
+    """TEST B: models that predict identically disagree by exactly 0."""
+    h1 = ScientificModel(model_id="linear", params={"k": 1.0})
+    h2 = ScientificModel(model_id="linear", params={"k": 1.0})
+    ranked = rank_discriminating_conditions((h1, h2), [{"x": 2.0}])
+    assert ranked[0].disagreement == 0.0
+
+
+def test_different_models_positive_disagreement():
+    """TEST C: rival models predict different values -> disagreement > 0."""
+    h1, h2 = _rival_pair()
+    ranked = rank_discriminating_conditions((h1, h2), [{"x": 2.0}])
+    assert ranked[0].disagreement > 0.0
+    predictions = dict(ranked[0].predictions)
+    assert predictions["linear"].value == 2.0       # k*x
+    assert predictions["quadratic"].value == 4.0    # k*x^2
+
+
+def test_bigger_gap_bigger_disagreement():
+    """TEST D: x=1 -> 0, x=2 -> 2, x=5 -> 20 (monotone in the gap)."""
+    h1, h2 = _rival_pair()
+    by_x = {r.conditions[0][1]: r.disagreement for r in
+            rank_discriminating_conditions(
+                (h1, h2), [{"x": 1.0}, {"x": 2.0}, {"x": 5.0}])}
+    assert by_x[1.0] == 0.0
+    assert by_x[2.0] == 2.0
+    assert by_x[5.0] == 20.0
+    assert by_x[5.0] > by_x[2.0] > by_x[1.0]
+
+
+def test_ranking_is_descending_by_disagreement():
+    """TEST E: most discriminating condition first (x=5 beats x=2)."""
+    h1, h2 = _rival_pair()
+    ranked = rank_discriminating_conditions(
+        (h1, h2), [{"x": 2.0}, {"x": 5.0}, {"x": 1.0}])
+    assert [r.disagreement for r in ranked] == [20.0, 2.0, 0.0]
+    assert ranked[0].conditions == (("x", 5.0),)
+    assert ranked[-1].conditions == (("x", 1.0),)
+
+
+def test_equal_disagreement_keeps_input_order():
+    """TEST F: deterministic stable tie-break — equal disagreements keep
+    the candidate_conditions input order (x=2 and x=-1 both give 2.0)."""
+    h1, h2 = _rival_pair()
+    order_a = rank_discriminating_conditions((h1, h2),
+                                             [{"x": 2.0}, {"x": -1.0}])
+    order_b = rank_discriminating_conditions((h1, h2),
+                                             [{"x": -1.0}, {"x": 2.0}])
+    assert [r.disagreement for r in order_a] == [2.0, 2.0]
+    assert order_a[0].conditions == (("x", 2.0),)
+    assert order_b[0].conditions == (("x", -1.0),)
+
+
+def test_ranking_repeated_runs_identical():
+    """TEST G: identical inputs -> byte-identical ranking, every time."""
+    h1, h2 = _rival_pair()
+    conditions = [{"x": 1.0}, {"x": 2.0}, {"x": 5.0}]
+    first = rank_discriminating_conditions((h1, h2), conditions)
+    second = rank_discriminating_conditions((h1, h2), conditions)
+    assert first == second
+
+
+def test_ranking_inputs_are_models_and_conditions_only():
+    """TEST H: the ranking channel is exactly (models, conditions) — no
+    universe access, no records, no engine truth can even be passed in;
+    and empty rivals are refused honestly."""
+    import inspect
+    params = list(inspect.signature(
+        rank_discriminating_conditions).parameters)
+    assert params == ["models", "candidate_conditions"]
+    with pytest.raises(ValueError, match="at least one candidate model"):
+        rank_discriminating_conditions((), [{"x": 1.0}])

@@ -21,15 +21,18 @@ from .knowledge import KnowledgeBase, LawRecord
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
 from .prediction import (
+    ConditionComparison,
     ScientificModel,
     disagreement,
     model_prediction,
+    rank_discriminating_conditions,
 )
 from .state import ScientistState
 from .uncertainty import certainty_class, relative_width, total_uncertainty
 
 __all__ = [
     "REGISTRY",
+    "ConditionComparison",
     "ExperimentBudget",
     "ExperimentDesigner",
     "ExperimentPlanner",
@@ -55,6 +58,7 @@ __all__ = [
     "disagreement",
     "fit_free_fall",
     "model_prediction",
+    "rank_discriminating_conditions",
     "relative_width",
     "total_uncertainty",
     "verify",

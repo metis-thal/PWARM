@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -114,6 +114,58 @@ def disagreement(prediction_a: Prediction,
     Bayesian evidence, or any complex metric.
     """
     return abs(prediction_a.value - prediction_b.value)
+
+
+# -- Model Competition Step 2: discriminating conditions -------------------
+
+@dataclass(frozen=True)
+class ConditionComparison:
+    """One candidate condition's discriminating power across the models.
+
+    Step-2 deliverable: information from BEFORE the experiment — how far
+    the candidate models would diverge under this condition. It contains
+    no verdict: no winner, no survival, no refutation. The experiment,
+    its observation and the model verdicts are later steps.
+    """
+
+    conditions: tuple[tuple[str, float], ...]
+    predictions: tuple[tuple[str, Prediction], ...]   # (model_id, prediction),
+    # in the input order of `models` — deterministic
+    disagreement: float                                # spread max - min
+
+
+def rank_discriminating_conditions(
+        models: Sequence[ScientificModel],
+        candidate_conditions: Sequence[dict[str, float]],
+) -> list[ConditionComparison]:
+    """Rank candidate conditions by how much they would separate models.
+
+    For each candidate condition, EVERY model predicts under it (pure
+    :func:`model_prediction` calls); the condition's disagreement is the
+    spread of the predicted values (max - min — for two models exactly
+    ``disagreement``). Results are sorted by disagreement DESCENDING with
+    a deterministic stable tie-break: equal disagreements keep the input
+    order of ``candidate_conditions``.
+
+    Pure and pre-experimental: the only inputs are the models and the
+    conditions; no universe access, no observation records, no engine
+    truth, no execution, no winner selection. Identical inputs always
+    produce an identical ranking.
+    """
+    if not models:
+        raise ValueError("at least one candidate model is required")
+    comparisons = []
+    for conditions in candidate_conditions:
+        predictions = tuple(
+            (model.model_id, model_prediction(model, conditions))
+            for model in models)
+        values = [prediction.value for _, prediction in predictions]
+        comparisons.append(ConditionComparison(
+            conditions=tuple(sorted(conditions.items())),
+            predictions=predictions,
+            disagreement=max(values) - min(values),
+        ))
+    return sorted(comparisons, key=lambda c: c.disagreement, reverse=True)
 
 
 # -- Prediction, Commitment, Verification (Phase 1 + Phase 2) ----------
