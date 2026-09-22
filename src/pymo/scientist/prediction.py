@@ -197,6 +197,72 @@ class ConditionBinding:
         return {self.mapping[key]: value for key, value in conditions.items()}
 
 
+# -- Genesis Step 5A: output binding (model output -> observation field) ----
+
+# ObservationRecord's measurement channels (its ``field_names``): the
+# identifier (experiment_id) and the bookkeeping counter (steps) are not
+# observable channels a model output could map to.
+_OBSERVATION_FIELDS = frozenset({"t", "z", "vx"})
+
+
+@dataclass(frozen=True)
+class OutputBinding:
+    """Explicit AI-side contract between the model's output vocabulary and
+    the observation channel: which ObservationRecord measurement field
+    each model output variable means.
+
+    Like ConditionBinding, this is DECLARED data, never guessed — an
+    unbound output or a non-observation target is refused loudly.
+    """
+
+    mapping: dict[str, str]     # model output variable -> record field
+
+    def field_for(self, output: str) -> str:
+        """The observation field this model output variable maps to."""
+        if output not in self.mapping:
+            raise ValueError(
+                f"model output {output!r} is not bound to an observation "
+                f"field; binding covers {sorted(self.mapping)}")
+        field = self.mapping[output]
+        if field not in _OBSERVATION_FIELDS:
+            raise ValueError(
+                f"{field!r} is not an ObservationRecord measurement field; "
+                f"valid: {sorted(_OBSERVATION_FIELDS)}")
+        return field
+
+
+@dataclass(frozen=True)
+class ComparisonInput:
+    """The aligned pair an adjudicator would consume, and nothing more:
+    the model's claimed value plus the observed channel it maps to. No
+    verdict exists at this step."""
+
+    prediction: Prediction
+    field: str                    # ObservationRecord measurement channel
+    observed: tuple[float, ...]   # the channel's measured samples
+
+
+def comparison_input(prediction: Prediction,
+                     record: ObservationRecord,
+                     binding: OutputBinding,
+                     output: str) -> ComparisonInput:
+    """Align a model prediction with its bound observation channel.
+
+    Pure and read-only: extracts the bound field's measured samples from
+    the record; computes no confirmed/refuted verdict and updates nothing
+    — adjudication is a later step.
+    """
+    field = binding.field_for(output)
+    channels = {"t": record.t, "z": record.z, "vx": record.vx}
+    series = channels[field]
+    if series is None:
+        raise ValueError(
+            f"observation field {field!r} is absent in this record "
+            f"(experiment {record.experiment_id!r})")
+    return ComparisonInput(prediction=prediction, field=field,
+                           observed=tuple(float(v) for v in series))
+
+
 # -- Prediction, Commitment, Verification (Phase 1 + Phase 2) ----------
 
 @dataclass(frozen=True)

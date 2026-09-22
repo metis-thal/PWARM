@@ -34,9 +34,11 @@ from pymo.scientist import (
     Laboratory,
     Mission,
     ObservationRecord,
+    OutputBinding,
     ScientificModel,
     ScientistAgent,
     ScientistState,
+    comparison_input,
     disagreement,
     model_prediction,
     rank_discriminating_conditions,
@@ -1042,3 +1044,106 @@ def test_binding_execution_verifies_nothing(lab, tmp_path):
     assert knowledge.verifications == {} and knowledge.predictions == {}   # H
     assert agent.last_verifications == []                                  # G
     assert state.belief("gravity").span == span_before                     # H
+
+
+# -- Genesis Step 5A: output binding (model output -> observation field) -----
+
+_Y_TO_Z = OutputBinding({"y": "z"})
+
+
+def test_output_binding_maps_y_to_z():
+    """TEST A: the declared mapping resolves y to the position channel."""
+    assert _Y_TO_Z.field_for("y") == "z"
+
+
+def test_unbound_output_refused():
+    """TEST B: an output the binding does not declare is a loud error."""
+    with pytest.raises(ValueError, match="not bound"):
+        _Y_TO_Z.field_for("u")
+
+
+def test_non_observation_field_refused():
+    """TEST C: targets outside ObservationRecord's measurement channels —
+    identifiers, bookkeeping counters, invented names — are refused."""
+    for bad in ("truth", "steps", "experiment_id", "secrets"):
+        with pytest.raises(ValueError, match="not an ObservationRecord"):
+            OutputBinding({"y": bad}).field_for("y")
+
+
+def test_output_binding_is_deterministic():
+    """TEST D: identical binding + output -> identical resolution."""
+    assert _Y_TO_Z.field_for("y") == _Y_TO_Z.field_for("y") == "z"
+
+
+def test_comparison_input_touches_neither_prediction_nor_record(lab):
+    """TESTS E+F: alignment is read-only — the prediction and the record
+    come out exactly as they went in."""
+    record = lab.run_experiment(ExperimentSpec(kind="drop", drop_height=5.0))
+    prediction = Prediction(claim="linear", value=5.0, tolerance=1.0)
+
+    aligned = comparison_input(prediction, record, _Y_TO_Z, output="y")
+
+    assert aligned.prediction == prediction            # E: untouched
+    assert aligned.observed == tuple(float(v) for v in record.z)
+    # F: the record is a frozen dataclass and alignment only reads its
+    # channels — the field names are unchanged measurement vocabulary
+    assert record.field_names == ("t", "z")
+
+
+def test_comparison_input_channel_is_truth_free():
+    """TEST G: the binding carries only declared names, and prediction.py
+    (its home) stays universe-free."""
+    assert _Y_TO_Z.mapping == {"y": "z"}
+    src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert not alias.name.startswith("pymo.universes")
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith("pymo.universes")
+
+
+def test_comparison_computes_no_verdict(lab, tmp_path):
+    """TESTS H+I: alignment produces no verification and touches no
+    belief or knowledge — the verdict is a later step's decision."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    span_before = state.belief("gravity").span
+    agent = _agent(lab, tmp_path)
+    record = lab.run_experiment(ExperimentSpec(kind="drop", drop_height=5.0))
+
+    comparison_input(Prediction("linear", 5.0, 1.0), record, _Y_TO_Z, "y")
+
+    assert knowledge.verifications == {} and knowledge.predictions == {}
+    assert agent.last_verifications == []
+    assert state.belief("gravity").span == span_before
+
+
+def test_vx_binding_on_non_slide_record_refused(lab):
+    """A binding to a channel the record does not carry fails loudly
+    instead of comparing against nothing."""
+    record = lab.run_experiment(ExperimentSpec(kind="drop", drop_height=5.0))
+    with pytest.raises(ValueError, match="absent in this record"):
+        comparison_input(Prediction("linear", 1.0, 0.5), record,
+                         OutputBinding({"y": "vx"}), output="y")
+
+
+def test_chain_reaches_the_verdict_doorstep(lab, tmp_path):
+    """Steps 1–5A in one breath: model -> prediction -> rank -> proposal
+    -> condition binding -> spec -> Laboratory -> record -> output
+    binding -> aligned comparison input. The verdict itself is still a
+    later step."""
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()
+
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+    record = agent.execute_proposal(
+        proposal, kind="drop", binding=ConditionBinding({"x": "drop_height"}))
+    prediction = model_prediction(h1, {"x": 5.0})
+
+    aligned = comparison_input(prediction, record, _Y_TO_Z, output="y")
+
+    assert aligned.prediction == prediction
+    assert aligned.field == "z"
+    assert aligned.observed == tuple(float(v) for v in record.z)
