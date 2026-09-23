@@ -418,13 +418,36 @@ def verify_commitment(record: PredictionRecord) -> bool:
     return record.committed_hash == commitment_hash(commitment_payload(record))
 
 
+def verify_prediction(prediction: Prediction,
+                      observed: float) -> PredictionOutcome:
+    """Adjudicate ONE prediction against ONE reduced observation scalar.
+
+    This is the single source of the adjudication rule (shared with
+    evaluate/adjudicate): ``residual = observed - predicted`` and
+    ``confirmed iff abs(residual) <= tolerance``. The observed scalar
+    must come from an ObservationReduction — it is accepted as given and
+    never re-derived here; the tolerance comes from the prediction and
+    is never adjusted to fit the observation.
+    """
+    residual = float(observed) - prediction.value
+    confirmed = abs(residual) <= prediction.tolerance
+    return PredictionOutcome(
+        claim=prediction.claim,
+        predicted=prediction.value,
+        observed=float(observed),
+        residual=residual,
+        status="confirmed" if confirmed else "refuted",
+    )
+
+
 def evaluate(prediction: Prediction,
              record: ObservationRecord) -> PredictionOutcome:
     """Compare a guess with an observation record (pure, AI-side).
 
     Phase-1 scope: gravity claims from free-fall records, using the same
     AI-side fit as everywhere else. The record is the only input — no
-    engine state, no hidden truth.
+    engine state, no hidden truth. The verdict itself is
+    :func:`verify_prediction`'s rule, applied to the fitted value.
     """
     if prediction.claim != "gravity":
         raise ValueError(
@@ -432,15 +455,7 @@ def evaluate(prediction: Prediction,
     if len(record.t) < 5:
         raise ValueError("record too short to evaluate a prediction")
     _, hypothesis = fit_free_fall(record)
-    residual = hypothesis.value - prediction.value
-    confirmed = abs(residual) <= prediction.tolerance
-    return PredictionOutcome(
-        claim=prediction.claim,
-        predicted=prediction.value,
-        observed=hypothesis.value,
-        residual=residual,
-        status="confirmed" if confirmed else "refuted",
-    )
+    return verify_prediction(prediction, hypothesis.value)
 
 
 def adjudicate(committed: PredictionRecord,

@@ -31,6 +31,7 @@ from .prediction import (
     disagreement,
     model_prediction,
     rank_discriminating_conditions,
+    verify_prediction,
 )
 from .state import ScientistState
 from .uncertainty import certainty_class, relative_width, total_uncertainty
@@ -72,4 +73,5 @@ __all__ = [
     "relative_width",
     "total_uncertainty",
     "verify",
+    "verify_prediction",
 ]

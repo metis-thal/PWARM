@@ -43,6 +43,7 @@ from pymo.scientist import (
     disagreement,
     model_prediction,
     rank_discriminating_conditions,
+    verify_prediction,
 )
 from pymo.scientist import agent as agent_module
 from pymo.scientist import prediction as prediction_module
@@ -1276,3 +1277,153 @@ def test_full_chain_reaches_the_scalar(lab, tmp_path):
 
     assert observed == pytest.approx(5.0, abs=0.01)   # the release height,
     # seen through one integration step of the recording apparatus
+
+
+# -- Genesis Step 5B-2: prediction vs observation -> model verification ------
+
+def test_prediction_confirmed_within_tolerance(lab):
+    """TEST A: predicted 5.0, reduced observed 4.997275 (the real drop
+    semantics), tolerance 0.01 -> CONFIRMED."""
+    aligned, _ = _aligned_drop_comparison(lab, 5.0)
+    observed = _REDUCTION.reduce(aligned)
+    outcome = verify_prediction(
+        Prediction(claim="linear", value=5.0, tolerance=0.01), observed)
+    assert outcome.status == "confirmed"
+    assert outcome.observed == pytest.approx(4.997275, abs=1e-6)
+
+
+def test_exact_match_confirmed():
+    """TEST B: observed == predicted -> residual 0 -> CONFIRMED."""
+    outcome = verify_prediction(Prediction("linear", 5.0, 0.01), 5.0)
+    assert outcome.status == "confirmed"
+    assert outcome.residual == 0.0
+
+
+def test_beyond_tolerance_refuted():
+    """TEST C: |residual| > tolerance -> REFUTED."""
+    outcome = verify_prediction(Prediction("linear", 5.0, 0.01), 5.02)
+    assert outcome.status == "refuted"
+
+
+def test_residual_sign_is_observed_minus_predicted():
+    """TEST D: the residual definition is explicit and signed."""
+    up = verify_prediction(Prediction("linear", 5.0, 1.0), 5.4)
+    down = verify_prediction(Prediction("linear", 5.0, 1.0), 4.6)
+    assert up.residual == pytest.approx(0.4)
+    assert down.residual == pytest.approx(-0.4)
+    assert up.observed == 5.4 and up.predicted == 5.0
+
+
+def test_tolerance_boundary_is_inclusive():
+    """TEST E: abs(residual) == tolerance -> CONFIRMED (binary-exact
+    values: 0.25 is exactly representable)."""
+    outcome = verify_prediction(Prediction("linear", 1.0, 0.25), 1.25)
+    assert outcome.residual == 0.25
+    assert outcome.status == "confirmed"
+
+
+def test_discretization_offset_must_be_absorbed_by_tolerance(lab):
+    """TEST F: the g*dt^2 recording offset is NOT corrected away — a
+    tolerance too tight to absorb it yields REFUTED on the raw reduced
+    value."""
+    aligned, _ = _aligned_drop_comparison(lab, 5.0)
+    observed = _REDUCTION.reduce(aligned)          # 4.997275, uncorrected
+    outcome = verify_prediction(
+        Prediction(claim="linear", value=5.0, tolerance=0.001), observed)
+    assert outcome.status == "refuted"
+    assert outcome.observed == pytest.approx(4.997275, abs=1e-6)  # not fixed up
+
+
+def test_verification_modifies_neither_prediction_nor_record(lab):
+    """TESTS G+H: the verdict is read-only."""
+    aligned, record = _aligned_drop_comparison(lab)
+    prediction = aligned.prediction
+    before_prediction, before_comparison = prediction, aligned
+
+    verify_prediction(prediction, _REDUCTION.reduce(aligned))
+
+    assert prediction == before_prediction
+    assert aligned == before_comparison
+    assert record.field_names == ("t", "z")
+
+
+def test_verification_channel_is_truth_free():
+    """TEST I: the verdict consumes only (prediction, observed) — its
+    home module stays universe-free."""
+    src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert not alias.name.startswith("pymo.universes")
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith("pymo.universes")
+
+
+def test_verification_writes_nothing(lab, tmp_path):
+    """TESTS J+K+M: a model-competition verdict is in-memory only — no
+    VerificationRecord persisted, no knowledge write, no belief change."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    span_before = state.belief("gravity").span
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+    record = agent.execute_proposal(
+        proposal, kind="drop", binding=ConditionBinding({"x": "drop_height"}))
+    aligned = comparison_input(model_prediction(h1, {"x": 5.0}), record,
+                               _Y_TO_Z, output="y")
+    outcome = verify_prediction(aligned.prediction,
+                                _REDUCTION.reduce(aligned))
+
+    assert outcome.status == "confirmed"
+    assert knowledge.verifications == {} and knowledge.predictions == {}
+    assert agent.last_verifications == []
+    assert state.belief("gravity").span == span_before
+
+
+def test_verification_runs_no_experiment(lab, tmp_path):
+    """TEST L: adjudication is pure — the Laboratory is never called."""
+    agent = _agent(lab, tmp_path)
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    verify_prediction(Prediction("linear", 5.0, 1.0), 5.0)
+    assert calls == []
+
+
+def test_one_prediction_one_observation_no_aggregation():
+    """TEST N: the verdict binds exactly one prediction to one reduced
+    observation — no cross-experiment aggregation, no shared state."""
+    a = verify_prediction(Prediction("linear", 5.0, 0.01), 4.997275)
+    b = verify_prediction(Prediction("linear", 5.0, 0.01), 4.997275)
+    assert a == b
+    assert a is not b
+
+
+def test_full_chain_reaches_the_verdict(lab, tmp_path):
+    """Steps 1–5B-2 in one breath: model -> prediction -> rank ->
+    proposal -> ConditionBinding -> ExperimentSpec -> Laboratory ->
+    ObservationRecord -> OutputBinding -> ComparisonInput ->
+    ObservationReduction -> scalar -> residual -> CONFIRMED/REFUTED.
+    Belief, knowledge and model survival are still untouched."""
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()
+
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+    record = agent.execute_proposal(
+        proposal, kind="drop", binding=ConditionBinding({"x": "drop_height"}))
+    prediction = replace(model_prediction(h1, {"x": 5.0}), tolerance=0.01)
+    aligned = comparison_input(prediction, record, _Y_TO_Z, output="y")
+    observed = _REDUCTION.reduce(aligned)
+    outcome = verify_prediction(prediction, observed)
+
+    assert observed == pytest.approx(4.997275, abs=1e-6)
+    assert outcome.residual == pytest.approx(-0.002725, abs=1e-6)
+    assert outcome.status == "confirmed"
