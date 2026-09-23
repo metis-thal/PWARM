@@ -34,6 +34,7 @@ from pymo.scientist import (
     Laboratory,
     Mission,
     ObservationRecord,
+    ObservationReduction,
     OutputBinding,
     ScientificModel,
     ScientistAgent,
@@ -1147,3 +1148,131 @@ def test_chain_reaches_the_verdict_doorstep(lab, tmp_path):
     assert aligned.prediction == prediction
     assert aligned.field == "z"
     assert aligned.observed == tuple(float(v) for v in record.z)
+
+
+# -- Genesis Step 5B-1: observation reduction (sample sequence -> scalar) ----
+
+_REDUCTION = ObservationReduction(channel="z", rule="first")
+
+
+def _aligned_drop_comparison(lab, drop_height=5.0):
+    """A real ComparisonInput from a real drop record (position channel)."""
+    record = lab.run_experiment(ExperimentSpec(kind="drop",
+                                               drop_height=drop_height))
+    prediction = Prediction(claim="linear", value=drop_height, tolerance=0.1)
+    return comparison_input(prediction, record, _Y_TO_Z, output="y"), record
+
+
+def test_reduction_of_real_drop_record_is_release_height(lab):
+    """TEST A: the 'first' rule reduces a real drop record's z channel to
+    its first sample — the release height minus one integration step."""
+    aligned, _ = _aligned_drop_comparison(lab, 5.0)
+    scalar = _REDUCTION.reduce(aligned)
+    assert isinstance(scalar, float)
+    assert scalar == pytest.approx(5.0, abs=0.01)
+    assert scalar == pytest.approx(4.997275, abs=1e-6)   # h - g*dt^2 exactly
+
+
+def test_reduction_contract_is_explicit():
+    """TEST B: the rule is declared contract data, not implicit behavior."""
+    assert _REDUCTION.channel == "z" and _REDUCTION.rule == "first"
+
+
+def test_missing_rule_refused(lab):
+    """TEST C: an empty rule is an explicit failure, not a default."""
+    aligned, _ = _aligned_drop_comparison(lab)
+    with pytest.raises(ValueError, match="unsupported reduction rule"):
+        ObservationReduction(channel="z", rule="").reduce(aligned)
+
+
+def test_unsupported_rule_refused(lab):
+    """TEST D: rules that do not exist are refused by name."""
+    aligned, _ = _aligned_drop_comparison(lab)
+    for rule in ("mean", "last", "min", "max", "fit"):
+        with pytest.raises(ValueError, match="unsupported reduction rule"):
+            ObservationReduction(channel="z", rule=rule).reduce(aligned)
+
+
+def test_channel_mismatch_refused(lab):
+    """A reduction bound to another channel than the comparison carries
+    is an explicit contract violation."""
+    aligned, _ = _aligned_drop_comparison(lab)
+    with pytest.raises(ValueError, match="channel mismatch|reduction targets"):
+        ObservationReduction(channel="t", rule="first").reduce(aligned)
+
+
+def test_reduction_is_deterministic(lab):
+    """TEST E: identical record -> identical scalar, every time."""
+    aligned, _ = _aligned_drop_comparison(lab)
+    assert (_REDUCTION.reduce(aligned)
+            == _REDUCTION.reduce(aligned)
+            == _REDUCTION.reduce(aligned))
+
+
+def test_reduction_modifies_neither_record_nor_prediction(lab):
+    """TESTS F+G: reduction is read-only — the frozen record and the
+    prediction come out exactly as they went in."""
+    aligned, record = _aligned_drop_comparison(lab)
+    before = aligned
+
+    _REDUCTION.reduce(aligned)
+
+    assert aligned == before                       # comparison untouched
+    assert record.field_names == ("t", "z")        # record untouched
+    assert aligned.prediction.value == 5.0         # prediction untouched
+
+
+def test_reduction_channel_is_truth_free():
+    """TEST H: the reduction carries only declared names, and its home
+    module stays universe-free."""
+    assert _REDUCTION.channel == "z" and _REDUCTION.rule == "first"
+    src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert not alias.name.startswith("pymo.universes")
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith("pymo.universes")
+
+
+def test_reduction_produces_no_verdict(lab, tmp_path):
+    """TESTS I+J: reduction ends at the scalar — no VerificationRecord,
+    no belief change, no knowledge write."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    span_before = state.belief("gravity").span
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+    record = agent.execute_proposal(
+        proposal, kind="drop", binding=ConditionBinding({"x": "drop_height"}))
+    aligned = comparison_input(model_prediction(h1, {"x": 5.0}), record,
+                               _Y_TO_Z, output="y")
+
+    _REDUCTION.reduce(aligned)
+
+    assert knowledge.verifications == {} and knowledge.predictions == {}
+    assert agent.last_verifications == []
+    assert state.belief("gravity").span == span_before
+
+
+def test_full_chain_reaches_the_scalar(lab, tmp_path):
+    """Steps 1–5B-1 in one breath: model -> prediction -> rank ->
+    proposal -> ConditionBinding -> ExperimentSpec -> Laboratory ->
+    ObservationRecord -> OutputBinding -> ComparisonInput ->
+    ObservationReduction -> scalar observed value. Adjudication is still
+    a later step."""
+    agent = _agent(lab, tmp_path)
+    h1, h2 = _rival_pair()
+
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 2.0}, {"x": 5.0}])
+    record = agent.execute_proposal(
+        proposal, kind="drop", binding=ConditionBinding({"x": "drop_height"}))
+    prediction = model_prediction(h1, {"x": 5.0})
+    aligned = comparison_input(prediction, record, _Y_TO_Z, output="y")
+    observed = ObservationReduction(channel="z", rule="first").reduce(aligned)
+
+    assert observed == pytest.approx(5.0, abs=0.01)   # the release height,
+    # seen through one integration step of the recording apparatus

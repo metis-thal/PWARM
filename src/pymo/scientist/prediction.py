@@ -263,6 +263,53 @@ def comparison_input(prediction: Prediction,
                            observed=tuple(float(v) for v in series))
 
 
+# -- Genesis Step 5B-1: observation reduction (sample sequence -> scalar) ----
+
+# Reduction rules over a measurement channel's sample sequence. First
+# version carries exactly one rule, chosen to match the drop experiment's
+# recorded semantics (see ObservationReduction).
+_REDUCTION_RULES = {
+    "first": lambda series: series[0],
+}
+
+
+@dataclass(frozen=True)
+class ObservationReduction:
+    """Explicit, reproducible contract for reducing a measurement
+    channel's sample sequence to the scalar a verdict would compare.
+
+    First version, one rule: ``"first"`` — the channel's first recorded
+    sample. This matches the drop experiment's recorded semantics: the
+    record starts one integration step after release, so the first z
+    sample is ``release_height - g*dt^2`` (semi-implicit Euler) — the
+    observation closest to the release height that a drop-height
+    prediction claims, with a small constant discretization offset that
+    is identical for every release height.
+
+    Declared, never guessed: an unsupported rule, an empty rule, a
+    channel mismatch, or an empty sample sequence is refused loudly.
+    """
+
+    channel: str      # ObservationRecord measurement field (e.g. "z")
+    rule: str         # reduction rule name; only "first" exists
+
+    def reduce(self, comparison: ComparisonInput) -> float:
+        """Reduce the comparison's observed samples to one scalar."""
+        if comparison.field != self.channel:
+            raise ValueError(
+                f"reduction targets channel {self.channel!r} but the "
+                f"comparison carries {comparison.field!r}")
+        rule = _REDUCTION_RULES.get(self.rule)
+        if rule is None:
+            raise ValueError(
+                f"unsupported reduction rule {self.rule!r}; "
+                f"supported: {sorted(_REDUCTION_RULES)}")
+        if not comparison.observed:
+            raise ValueError(
+                f"no samples to reduce on channel {self.channel!r}")
+        return float(rule(comparison.observed))
+
+
 # -- Prediction, Commitment, Verification (Phase 1 + Phase 2) ----------
 
 @dataclass(frozen=True)
