@@ -51,6 +51,7 @@ from pymo.scientist import state as state_module
 from pymo.scientist.agent import proposal_to_spec
 from pymo.scientist.prediction import (
     Prediction,
+    PredictionOutcome,
     PredictionRecord,
     adjudicate,
     prediction_from_belief,
@@ -1427,3 +1428,192 @@ def test_full_chain_reaches_the_verdict(lab, tmp_path):
     assert observed == pytest.approx(4.997275, abs=1e-6)
     assert outcome.residual == pytest.approx(-0.002725, abs=1e-6)
     assert outcome.status == "confirmed"
+
+
+# -- Genesis Step 6: competition prediction commitment ------------------------
+
+def _committed_rivals(agent, tolerances=None):
+    """rank -> propose -> commit BOTH rivals under the winning condition."""
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+    records = agent.commit_discriminating_predictions(
+        (h1, h2), proposal, kind="drop",
+        binding=ConditionBinding({"x": "drop_height"}),
+        tolerances=tolerances)
+    return records, proposal
+
+
+def test_both_rivals_commit_independently(lab, tmp_path):
+    """TESTS A+B+C: two rivals -> two predictions -> two commitments that
+    coexist without overwriting each other."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    records, _ = _committed_rivals(agent)
+
+    assert len(records) == 2
+    assert {r.claim for r in records} == {"linear", "quadratic"}
+    assert {r.predicted for r in records} == {5.0, 25.0}
+    assert all(verify_commitment(r) for r in records)
+    assert len(knowledge.predictions) == 2          # both coexist
+    assert records[0].prediction_id != records[1].prediction_id
+
+
+def test_shared_spec_ref_independent_ids_and_hashes(lab, tmp_path):
+    """TESTS D+E: both records point at the SAME experiment spec, yet
+    carry independent ids, sequence indices and hashes."""
+    agent = _agent(lab, tmp_path)
+    records, _ = _committed_rivals(agent)
+    assert records[0].spec_ref == records[1].spec_ref == "drop_h5_m1"
+    assert records[0].prediction_id != records[1].prediction_id
+    assert records[0].committed_hash != records[1].committed_hash
+    assert records[1].seq == records[0].seq + 1
+
+
+def test_commitment_phase_never_calls_the_laboratory(lab, tmp_path):
+    """TEST F: the commitment phase is pure AI-side bookkeeping — physics
+    is never invoked."""
+    agent = _agent(lab, tmp_path)
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    _committed_rivals(agent)
+    assert calls == []
+
+
+def test_later_prediction_changes_cannot_touch_commitments(lab, tmp_path):
+    """TEST G: commitments are frozen history — a different prediction
+    object afterwards changes nothing about the saved record, and
+    tampering with a STORED record is detected by its hash."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+    guess_a = model_prediction(h1, {"x": 5.0})
+    records = agent.commit_discriminating_predictions(
+        (h1, h2), proposal, kind="drop",
+        binding=ConditionBinding({"x": "drop_height"}))
+
+    replace(guess_a, value=9.9, tolerance=0.5)      # a changed mind, in memory
+    assert records[0].predicted == 5.0              # commitment unchanged
+    assert verify_commitment(records[0])
+
+    tampered = replace(records[0], predicted=9.9)   # edit the STORED record
+    assert not verify_commitment(tampered)
+    knowledge.predictions[records[0].prediction_id] = tampered
+    outcome = PredictionOutcome(claim="linear", predicted=9.9, observed=5.0,
+                                residual=-4.9, status="refuted")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        knowledge.record_verification(records[0].prediction_id,
+                                      "drop_h5_m1", outcome)
+
+
+def test_rivals_can_have_different_tolerances(lab, tmp_path):
+    """TEST H: per-model tolerances flow into each commitment untouched."""
+    agent = _agent(lab, tmp_path)
+    records, _ = _committed_rivals(
+        agent, tolerances={"linear": 0.01, "quadratic": 0.5})
+    assert {r.claim: r.tolerance for r in records} == {
+        "linear": 0.01, "quadratic": 0.5}
+
+
+def test_commitment_phase_writes_only_commitments(lab, tmp_path):
+    """TESTS I+J+K: commitment ends at PredictionRecords — no
+    VerificationRecord, no belief change, nothing else in the store."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    state = ScientistState(("gravity",), knowledge)
+    span_before = state.belief("gravity").span
+    agent = ScientistAgent(lab, knowledge)
+
+    _committed_rivals(agent)
+
+    assert knowledge.verifications == {}                        # I
+    assert len(knowledge.predictions) == 2                      # K: commitments only
+    assert agent.last_verifications == []
+    assert state.belief("gravity").span == span_before          # J
+
+
+def test_commitment_channel_is_truth_free():
+    """TESTS L+M: the commitment path's home modules stay universe-free."""
+    knowledge_module = sys.modules["pymo.scientist.knowledge"]
+    for module in (prediction_module, agent_module, knowledge_module):
+        src = Path(module.__file__).read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not alias.name.startswith("pymo.universes")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("pymo.universes")
+
+
+def test_commitments_precede_execution(lab, tmp_path):
+    """TEST N: commit A, commit B — only then may execute_proposal run.
+    The spy checks, at the moment physics is invoked, that BOTH
+    commitments are already persisted."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+    events: list[tuple[str, int]] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        events.append(("experiment", len(knowledge.predictions)))
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+
+    records = agent.commit_discriminating_predictions(
+        (h1, h2), proposal, kind="drop",
+        binding=ConditionBinding({"x": "drop_height"}))
+    events.append(("commit", len(knowledge.predictions)))
+    agent.execute_proposal(proposal, kind="drop",
+                           binding=ConditionBinding({"x": "drop_height"}))
+
+    assert events == [("commit", 2), ("experiment", 2)]
+    assert len(records) == 2
+
+
+def test_gravity_commitment_flow_unchanged(lab, tmp_path):
+    """TEST O: the ordinary belief-driven gravity commitment flow is
+    untouched by the competition path."""
+    agent = _agent(lab, tmp_path)
+    report = agent.run_mission(MISSION)
+    assert report.status == "DISCOVERED"
+    assert agent.last_committed_predictions
+    assert agent.last_committed_predictions[0].claim == "gravity"
+
+
+def test_competition_chain_stops_at_commitment(lab, tmp_path):
+    """The Step 6 chain in one breath: model A -> prediction A, model B ->
+    prediction B -> rank -> proposal -> commit A -> commit B -> STOP.
+    No experiment runs; both commitments sit in the ledger, hash-verified."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    h1, h2 = _rival_pair()
+
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+    records = agent.commit_discriminating_predictions(
+        (h1, h2), proposal, kind="drop",
+        binding=ConditionBinding({"x": "drop_height"}))
+
+    assert len(records) == 2
+    assert len(knowledge.predictions) == 2
+    assert all(verify_commitment(r) for r in records)
+    assert calls == []                              # stopped before physics

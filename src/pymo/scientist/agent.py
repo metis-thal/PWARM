@@ -14,7 +14,7 @@ executes them, the AI observes results. The agent's only data channel is
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from .budget import ExperimentBudget
 from .designer import ExperimentDesigner
@@ -33,6 +33,7 @@ from .prediction import (
     ScientificModel,
     VerificationRecord,
     adjudicate,
+    model_prediction,
     prediction_from_belief,
     rank_discriminating_conditions,
 )
@@ -235,6 +236,33 @@ class ScientistAgent:
         """
         spec = proposal_to_spec(proposal, kind, binding)
         return self.laboratory.run_experiment(spec)
+
+    # -- Genesis Step 6: competition prediction commitment -------------------
+
+    def commit_discriminating_predictions(
+            self, models: Sequence[ScientificModel],
+            proposal: ConditionComparison,
+            kind: str,
+            binding: ConditionBinding | None = None,
+            tolerances: Mapping[str, float] | None = None,
+            ) -> list[PredictionRecord]:
+        """Commit EVERY rival model's prediction under the winning
+        condition, BEFORE the experiment runs.
+
+        Reuses the existing commitment machinery (commit_predictions ->
+        KnowledgeBase.commit_prediction): one PredictionRecord per model,
+        each with its own id, sequence index and hash, all pointing at
+        the SAME experiment spec. Nothing runs here — no Laboratory call,
+        no verification, no belief change; execution and adjudication
+        are later steps.
+        """
+        spec = proposal_to_spec(proposal, kind, binding)
+        conditions = dict(proposal.conditions)
+        per_model = tolerances or {}
+        guesses = [model_prediction(model, conditions,
+                                    per_model.get(model.model_id, 1.0))
+                   for model in models]
+        return self.commit_predictions(guesses, [spec])
 
     # -- the mission loop ------------------------------------------------------
 
