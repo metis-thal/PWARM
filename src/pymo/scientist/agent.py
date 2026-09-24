@@ -28,14 +28,18 @@ from .planner import ExperimentPlanner
 from .prediction import (
     ConditionBinding,
     ConditionComparison,
+    ObservationReduction,
+    OutputBinding,
     Prediction,
     PredictionRecord,
     ScientificModel,
     VerificationRecord,
     adjudicate,
+    comparison_input,
     model_prediction,
     prediction_from_belief,
     rank_discriminating_conditions,
+    verify_prediction,
 )
 from .state import ScientistState
 
@@ -263,6 +267,41 @@ class ScientistAgent:
                                     per_model.get(model.model_id, 1.0))
                    for model in models]
         return self.commit_predictions(guesses, [spec])
+
+    # -- Genesis Step 7: one observation, many competing verdicts ------------
+
+    def verify_competing_predictions(
+            self, committed: Sequence[PredictionRecord],
+            record: ObservationRecord,
+            output_binding: OutputBinding,
+            output: str,
+            reduction: ObservationReduction,
+            ) -> list[VerificationRecord]:
+        """Verify EVERY committed prediction against ONE observation record.
+
+        One experiment, one record — but each committed prediction is
+        adjudicated independently through the existing path: its
+        commitment hash is checked (tampering refused), the prediction is
+        rebuilt from the immutable record, the reduced observation scalar
+        is compared via verify_prediction's single rule, and one
+        VerificationRecord is persisted per prediction (each carrying its
+        own prediction_id, all sharing the record's experiment_id). No
+        winner, no elimination, no belief update — and the Laboratory is
+        never called.
+        """
+        verifications = []
+        for committed_prediction in committed:
+            rebuilt = Prediction(
+                claim=committed_prediction.claim,
+                value=committed_prediction.predicted,
+                tolerance=committed_prediction.tolerance,
+                source=committed_prediction.model_ref)
+            aligned = comparison_input(rebuilt, record, output_binding, output)
+            outcome = verify_prediction(rebuilt, reduction.reduce(aligned))
+            verifications.append(self.knowledge.record_verification(
+                committed_prediction.prediction_id, record.experiment_id,
+                outcome))
+        return verifications
 
     # -- the mission loop ------------------------------------------------------
 

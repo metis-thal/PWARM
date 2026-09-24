@@ -1617,3 +1617,206 @@ def test_competition_chain_stops_at_commitment(lab, tmp_path):
     assert len(knowledge.predictions) == 2
     assert all(verify_commitment(r) for r in records)
     assert calls == []                              # stopped before physics
+
+
+# -- Genesis Step 7: one observation, many competing verdicts -----------------
+
+def _competed_and_executed(lab, tmp_path, tolerances=None):
+    """Steps 2–6 + one execution: rivals committed, experiment run ONCE."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment(
+        (h1, h2), [{"x": 5.0}])
+    records = agent.commit_discriminating_predictions(
+        (h1, h2), proposal, kind="drop",
+        binding=ConditionBinding({"x": "drop_height"}), tolerances=tolerances)
+    observation = agent.execute_proposal(
+        proposal, kind="drop", binding=ConditionBinding({"x": "drop_height"}))
+    return knowledge, agent, records, observation
+
+
+def _verify_rivals(agent, records, observation):
+    return agent.verify_competing_predictions(
+        records, observation, OutputBinding({"y": "z"}), "y",
+        ObservationReduction(channel="z", rule="first"))
+
+
+def test_one_observation_yields_two_verifications(lab, tmp_path):
+    """TEST A: two committed predictions + one record -> two
+    VerificationRecords."""
+    knowledge, agent, records, observation = _competed_and_executed(
+        lab, tmp_path, tolerances={"linear": 0.01, "quadratic": 0.5})
+    verifications = _verify_rivals(agent, records, observation)
+    assert len(verifications) == 2
+    assert len(knowledge.verifications) == 2
+
+
+def test_verifications_link_to_own_predictions(lab, tmp_path):
+    """TESTS B+C: each verification carries its own prediction_id, and
+    both share the single experiment's id."""
+    _, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    verifications = _verify_rivals(agent, records, observation)
+    assert {v.prediction_id for v in verifications} == {
+        r.prediction_id for r in records}
+    assert all(v.experiment_id == observation.experiment_id
+               for v in verifications)
+
+
+def test_typical_competition_one_confirmed_one_refuted(lab, tmp_path):
+    """TEST D: the canonical case — linear (predicted 5.0, observed
+    4.997275) confirms; quadratic (predicted 25.0) refutes."""
+    _, agent, records, observation = _competed_and_executed(
+        lab, tmp_path, tolerances={"linear": 0.01, "quadratic": 0.5})
+    verifications = _verify_rivals(agent, records, observation)
+    statuses = {v.prediction_id: v.status for v in verifications}
+    linear = next(r for r in records if r.claim == "linear")
+    quadratic = next(r for r in records if r.claim == "quadratic")
+    assert statuses[linear.prediction_id] == "confirmed"
+    assert statuses[quadratic.prediction_id] == "refuted"
+
+
+def test_both_confirm_and_both_refute_are_representable(lab, tmp_path):
+    """TEST E: the verdicts are independent — both can confirm (a wide
+    tolerance) or both refute (tight ones); no winner is implied."""
+    _, agent, records, observation = _competed_and_executed(
+        lab, tmp_path, tolerances={"linear": 0.01, "quadratic": 30.0})
+    both_confirmed = _verify_rivals(agent, records, observation)
+    assert all(v.status == "confirmed" for v in both_confirmed)
+
+    _, agent2, records2, observation2 = _competed_and_executed(
+        lab, tmp_path, tolerances={"linear": 0.001, "quadratic": 0.5})
+    both_refuted = _verify_rivals(agent2, records2, observation2)
+    assert all(v.status == "refuted" for v in both_refuted)
+
+
+def test_residuals_are_per_prediction(lab, tmp_path):
+    """TESTS F+G: residual = observed - each prediction's own value, and
+    each verdict used its own commitment's tolerance."""
+    observed_expected = 4.997275
+    _, agent, records, observation = _competed_and_executed(
+        lab, tmp_path, tolerances={"linear": 0.01, "quadratic": 0.5})
+    verifications = _verify_rivals(agent, records, observation)
+    by_pid = {v.prediction_id: v for v in verifications}
+    for record in records:
+        v = by_pid[record.prediction_id]
+        assert v.residual == pytest.approx(observed_expected - record.predicted,
+                                           abs=1e-6)
+        assert f"tolerance {record.tolerance:g}" in v.evidence
+
+
+def test_memory_prediction_changes_cannot_affect_verdicts(lab, tmp_path):
+    """TEST H: verdicts are computed from the COMMITTED record — later
+    edits to in-memory prediction objects change nothing."""
+    _knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    h1, h2 = _rival_pair()
+    for model in (h1, h2):
+        replace(model_prediction(model, {"x": 5.0}), value=99.0, tolerance=99.0)
+    verifications = _verify_rivals(agent, records, observation)
+    assert {v.status for v in verifications} == {"confirmed", "refuted"}
+
+
+def test_tampered_commitment_is_refused_not_quietly_verified(lab, tmp_path):
+    """TEST I: editing a stored PredictionRecord breaks its hash — the
+    verification refuses loudly and records nothing for it."""
+    knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    tampered = replace(records[0], predicted=4.9)   # a real content edit
+    assert not verify_commitment(tampered)
+    knowledge.predictions[records[0].prediction_id] = tampered
+    with pytest.raises(ValueError, match="hash mismatch"):
+        _verify_rivals(agent, records, observation)
+    assert len(knowledge.verifications) == 0        # nothing slipped through
+
+
+def test_verification_phase_never_calls_the_laboratory(lab, tmp_path):
+    """TEST J: the same observation verifies everyone — physics is not
+    invoked again during verification."""
+    _, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    _verify_rivals(agent, records, observation)
+    assert calls == []
+
+
+def test_verification_leaves_no_competition_state(lab, tmp_path):
+    """TEST K: after verification — no belief update, no new predictions,
+    no elimination/winner/survivor state anywhere in the store."""
+    knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    state = ScientistState(("gravity",), knowledge)
+    span_before = state.belief("gravity").span
+
+    _verify_rivals(agent, records, observation)
+
+    assert state.belief("gravity").span == span_before
+    assert len(knowledge.predictions) == 2          # no new predictions
+    assert all(r.status in ("confirmed", "refuted")
+               for r in knowledge.predictions.values())
+    assert not any("winner" in v.evidence or "survivor" in v.evidence
+                   for v in knowledge.verifications.values())
+
+
+def test_verifications_persist_independently(lab, tmp_path):
+    """TEST L: both VerificationRecords survive a save/reload cycle with
+    their own ids and links intact."""
+    _knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    verifications = _verify_rivals(agent, records, observation)
+    reloaded = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    assert len(reloaded.verifications) == 2
+    assert {v.prediction_id for v in reloaded.verifications.values()} == {
+        v.prediction_id for v in verifications}
+
+
+def test_reverification_appends_no_aggregation(lab, tmp_path):
+    """TEST M: verifying the same commitments against the same experiment
+    again appends fresh records — no accumulated score, no win rate."""
+    knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    first = _verify_rivals(agent, records, observation)
+    second = _verify_rivals(agent, records, observation)
+    assert len(knowledge.verifications) == 4
+    assert [v.status for v in second] == [v.status for v in first]
+    assert second[0].verification_id != first[0].verification_id
+
+
+def test_competition_verification_channel_is_truth_free():
+    """TEST N: the verification path's home modules stay universe-free."""
+    knowledge_module = sys.modules["pymo.scientist.knowledge"]
+    for module in (prediction_module, agent_module, knowledge_module):
+        src = Path(module.__file__).read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not alias.name.startswith("pymo.universes")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("pymo.universes")
+
+
+def test_gravity_verification_flow_unchanged(lab, tmp_path):
+    """TEST O: the ordinary belief-driven gravity verification flow is
+    untouched by the competition path."""
+    agent = _agent(lab, tmp_path)
+    report = agent.run_mission(MISSION)
+    assert report.status == "DISCOVERED"
+    assert agent.last_verifications
+    assert all(v.status == "confirmed" for v in agent.last_verifications)
+
+
+def test_full_chain_stops_at_two_verifications(lab, tmp_path):
+    """TEST P: Steps 1–7 in one breath — model A -> prediction, model B ->
+    prediction -> rank -> proposal -> commit A -> commit B -> execute ONCE
+    -> ObservationRecord -> OutputBinding -> ComparisonInput ->
+    ObservationReduction -> verify A -> verify B. Final state: two
+    VerificationRecords; belief and knowledge learning untouched."""
+    knowledge, agent, records, observation = _competed_and_executed(
+        lab, tmp_path, tolerances={"linear": 0.01, "quadratic": 0.5})
+    verifications = _verify_rivals(agent, records, observation)
+
+    assert len(verifications) == 2
+    assert len(knowledge.verifications) == 2
+    assert len(knowledge.predictions) == 2
+    assert {v.status for v in verifications} == {"confirmed", "refuted"}
