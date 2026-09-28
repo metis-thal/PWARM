@@ -362,6 +362,40 @@ class VerificationRecord:
 
 
 @dataclass(frozen=True)
+class EvidenceSummary:
+    """Deterministic, AI-side aggregation of ONE model's verification history.
+
+    Answers "what experimental evidence does this model currently have?" by
+    reading ONLY persisted :class:`PredictionRecord` s and
+    :class:`VerificationRecord` s and tracing each verification back through
+    ``prediction_id -> model_ref`` — the model is never guessed, and a
+    verification whose prediction_id has no matching prediction is skipped
+    (its model cannot be known).
+
+    This is a faithful accounting and NOTHING more: no winner, no weight, no
+    elimination, no belief, no probability. It is a pure read — it writes no
+    verification, changes no record, and never consults the Laboratory. All
+    collections are deterministically ordered (verification id order for the
+    per-evidence lists; sorted for the distinct id sets).
+
+    ``independent_experiments`` is the number of DISTINCT experiment ids a
+    model's evidence spans — the same experiment verified twice counts once.
+    ``verification_count`` counts every persisted VerificationRecord.
+    """
+
+    model_ref: str
+    prediction_ids: tuple[str, ...]           # distinct, sorted
+    experiment_ids: tuple[str, ...]           # distinct, sorted
+    independent_experiments: int              # len(experiment_ids)
+    verification_count: int                   # every persisted VerificationRecord
+    confirmed_count: int
+    refuted_count: int
+    residuals: tuple[float, ...]              # one per verification, deterministic order
+    statuses: tuple[str, ...]                 # aligned with residuals
+    evidence: tuple[VerificationRecord, ...]  # per-evidence linkage, same order
+
+
+@dataclass(frozen=True)
 class PredictionOutcome:
     """Transient adjudication result (before persistence)."""
 

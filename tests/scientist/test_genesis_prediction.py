@@ -53,6 +53,7 @@ from pymo.scientist.prediction import (
     Prediction,
     PredictionOutcome,
     PredictionRecord,
+    VerificationRecord,
     adjudicate,
     prediction_from_belief,
     verify_commitment,
@@ -1820,3 +1821,298 @@ def test_full_chain_stops_at_two_verifications(lab, tmp_path):
     assert len(knowledge.verifications) == 2
     assert len(knowledge.predictions) == 2
     assert {v.status for v in verifications} == {"confirmed", "refuted"}
+
+
+# -- Genesis Step 8: per-model evidence summary (aggregate, no verdict) -------
+#
+# Same model, many independent VerificationRecords -> one deterministic,
+# AI-side EvidenceSummary. The summary is a faithful accounting and NOTHING
+# more: no winner, no weight, no elimination, no belief, no probability.
+# It reads only persisted PredictionRecords + VerificationRecords, tracing
+# verification -> prediction_id -> model_ref, and writes nothing.
+
+def _commit_and_verify(knowledge, model_ref, cases):
+    """Build a model's evidence history directly in the store.
+
+    ``cases``: list of (claim, predicted, tolerance, experiment_id, observed).
+    Returns (predictions, verifications) in commit order.
+    """
+    predictions, verifications = [], []
+    for claim, predicted, tolerance, experiment_id, observed in cases:
+        pred = knowledge.commit_prediction(
+            model_ref=model_ref, claim=claim, spec_ref=experiment_id,
+            value=predicted, tolerance=tolerance)
+        predictions.append(pred)
+        residual = observed - predicted
+        outcome = PredictionOutcome(
+            claim=claim, predicted=predicted, observed=observed,
+            residual=residual,
+            status="confirmed" if abs(residual) <= tolerance else "refuted")
+        verifications.append(knowledge.record_verification(
+            pred.prediction_id, experiment_id, outcome))
+    return predictions, verifications
+
+
+def _step8_scenario(tmp_path):
+    """The canonical Step 8 scenario: two rival models with shared and
+    independent experiments, persisted and ready to be summarized."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    a_predictions, a_verifications = _commit_and_verify(knowledge, "model A", [
+        # Prediction A1 -> Experiment E1 -> CONFIRMED
+        ("linear", 5.0, 0.5, "E1", 5.0),
+        # Prediction A2 -> Experiment E2 -> CONFIRMED
+        ("linear", 6.0, 0.5, "E2", 6.0),
+        # Prediction A3 -> Experiment E3 -> REFUTED
+        ("quadratic", 9.0, 0.5, "E3", 8.0),
+    ])
+    b_predictions, b_verifications = _commit_and_verify(knowledge, "model B", [
+        # Prediction B1 -> Experiment E1 -> REFUTED
+        ("quadratic", 8.0, 0.5, "E1", 9.0),
+        # Prediction B2 -> Experiment E2 -> CONFIRMED
+        ("linear", 6.0, 0.5, "E2", 6.0),
+    ])
+    return (knowledge, a_predictions, a_verifications,
+            b_predictions, b_verifications)
+
+
+def test_a_three_independent_experiments_counted(tmp_path):
+    """TEST A: one model, 3 independent experiments (confirmed, confirmed,
+    refuted) -> the summary counts exactly 3."""
+    knowledge, _, _, _, _ = _step8_scenario(tmp_path)
+    summary = knowledge.evidence_for_model("model A")
+
+    assert summary.verification_count == 3
+    assert summary.confirmed_count == 2
+    assert summary.refuted_count == 1
+    assert summary.independent_experiments == 3
+    assert summary.experiment_ids == ("E1", "E2", "E3")
+
+
+def test_b_two_rivals_summarized_independently(tmp_path):
+    """TEST B: two competing models -> each summary is its own history."""
+    knowledge, _, _, _, _ = _step8_scenario(tmp_path)
+    summary_a = knowledge.evidence_for_model("model A")
+    summary_b = knowledge.evidence_for_model("model B")
+
+    assert summary_a.model_ref == "model A"
+    assert summary_b.model_ref == "model B"
+    assert summary_a.verification_count == 3
+    assert summary_b.verification_count == 2
+    assert summary_a.confirmed_count == 2 and summary_a.refuted_count == 1
+    assert summary_b.confirmed_count == 1 and summary_b.refuted_count == 1
+    assert summary_b.experiment_ids == ("E1", "E2")
+    assert set(summary_a.prediction_ids).isdisjoint(set(summary_b.prediction_ids))
+
+
+def test_c_same_experiment_counts_once_per_model(tmp_path):
+    """TEST C: a model verified twice against the SAME experiment -> that
+    experiment_id appears once; the verifications still count individually."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model C", [
+        ("linear", 5.0, 0.5, "E1", 5.0),    # C1 -> E1 -> confirmed
+        ("linear", 5.5, 0.5, "E1", 5.5),    # C2 -> E1 -> confirmed (same exp)
+    ])
+    summary = knowledge.evidence_for_model("model C")
+
+    assert summary.verification_count == 2
+    assert summary.independent_experiments == 1
+    assert summary.experiment_ids == ("E1",)
+
+
+def test_d_same_prediction_not_double_counted(tmp_path):
+    """TEST D: one prediction verified against two experiments -> it appears
+    once in prediction_ids while both verifications are still counted."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    preds, _ = _commit_and_verify(knowledge, "model D", [
+        ("linear", 5.0, 0.5, "E1", 5.0),    # D1 -> E1 -> confirmed
+    ])
+    # verify the SAME prediction against a second experiment
+    pred = preds[0]
+    outcome = PredictionOutcome(
+        claim=pred.claim, predicted=pred.predicted, observed=5.0,
+        residual=0.0, status="confirmed")
+    knowledge.record_verification(pred.prediction_id, "E2", outcome)
+    summary = knowledge.evidence_for_model("model D")
+
+    assert summary.verification_count == 2
+    assert summary.independent_experiments == 2
+    assert summary.prediction_ids == (pred.prediction_id,)
+
+
+def test_e_prediction_to_model_association_is_correct(tmp_path):
+    """TEST E: each summary's evidence traces back to the right model via
+    prediction_id -> model_ref; every verification lands in its owner's
+    summary with its experiment_id and prediction_id preserved."""
+    knowledge, a_preds, a_verifs, _, b_verifs = _step8_scenario(tmp_path)
+    summary_a = knowledge.evidence_for_model("model A")
+
+    assert summary_a.prediction_ids == tuple(
+        sorted(p.prediction_id for p in a_preds))
+    assert summary_a.evidence == tuple(a_verifs)
+    # every A verification is present, carrying its own prediction+experiment
+    for verif, pred in zip(a_verifs, a_preds):
+        assert verif.prediction_id == pred.prediction_id
+    # and B's evidence is exactly B's, disjoint from A's
+    summary_b = knowledge.evidence_for_model("model B")
+    assert summary_b.evidence == tuple(b_verifs)
+
+
+def test_f_nonexistent_model_and_orphan_are_not_guessed(tmp_path):
+    """TEST F: a model_ref with no history is an honest empty summary, and an
+    orphaned VerificationRecord (unknown prediction_id) is skipped — its model
+    is never guessed into anyone's summary."""
+    knowledge, _, _, _, _ = _step8_scenario(tmp_path)
+
+    empty = knowledge.evidence_for_model("nobody")
+    assert empty.model_ref == "nobody"
+    assert empty.verification_count == 0
+    assert empty.prediction_ids == () and empty.experiment_ids == ()
+    assert empty.residuals == () and empty.statuses == ()
+    assert empty.evidence == ()
+
+    # an orphan: a verification whose prediction_id has no matching prediction
+    orphan = VerificationRecord(
+        verification_id="verif-9999", prediction_id="pred-nope",
+        experiment_id="E9", observed=1.0, residual=0.0,
+        status="confirmed", evidence="orphaned record")
+    knowledge.verifications["verif-9999"] = orphan
+
+    summary_a = knowledge.evidence_for_model("model A")
+    summary_b = knowledge.evidence_for_model("model B")
+    assert all(v.prediction_id != "pred-nope" for v in summary_a.evidence)
+    assert all(v.prediction_id != "pred-nope" for v in summary_b.evidence)
+    assert knowledge.evidence_for_model("pred-nope").verification_count == 0
+
+
+def test_g_residuals_preserved_in_deterministic_order(tmp_path):
+    """TEST G: residuals keep their recorded values and a deterministic
+    (verification-id) order — no re-sorting, no re-derivation."""
+    knowledge, _, _, _, _ = _step8_scenario(tmp_path)
+    summary_a = knowledge.evidence_for_model("model A")
+    summary_b = knowledge.evidence_for_model("model B")
+
+    # A: 5.0-5.0, 6.0-6.0, 8.0-9.0 in verification-id order
+    assert summary_a.residuals == (0.0, 0.0, -1.0)
+    assert summary_a.statuses == ("confirmed", "confirmed", "refuted")
+    # B: 9.0-8.0, 6.0-6.0
+    assert summary_b.residuals == (1.0, 0.0)
+    assert summary_b.statuses == ("refuted", "confirmed")
+    # residuals match the recorded VerificationRecords exactly
+    assert all(summary_a.residuals[i] == v.residual
+               for i, v in enumerate(summary_a.evidence))
+
+
+def test_h_repeated_queries_are_identical(tmp_path):
+    """TEST H: identical store -> byte-identical summary, every time."""
+    def _run():
+        knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+        return knowledge.evidence_for_model("model A")
+
+    assert _run() == _run()
+
+
+def test_i_summary_does_not_change_knowledge(tmp_path):
+    """TEST I: summarizing is a pure read — predictions, verifications and
+    the on-disk store are untouched."""
+    knowledge, _, _, _, _ = _step8_scenario(tmp_path)
+    path = tmp_path / "k.json"
+    before_predictions = dict(knowledge.predictions)
+    before_verifications = dict(knowledge.verifications)
+    before_disk = path.read_text(encoding="utf-8")
+
+    knowledge.evidence_for_model("model A")
+    knowledge.evidence_for_model("model B")
+
+    assert knowledge.predictions == before_predictions
+    assert knowledge.verifications == before_verifications
+    assert path.read_text(encoding="utf-8") == before_disk
+
+
+def test_j_summary_does_not_change_belief(tmp_path):
+    """TEST J: summarizing never touches the AI's self-model (beliefs)."""
+    knowledge, _, _, _, _ = _step8_scenario(tmp_path)
+    state = ScientistState(("gravity",), knowledge)
+    span_before = state.belief("gravity").span
+
+    knowledge.evidence_for_model("model A")
+    knowledge.evidence_for_model("model B")
+
+    assert state.belief("gravity").span == span_before
+
+
+def test_k_summary_produces_no_verification(tmp_path):
+    """TEST K: summarizing creates no VerificationRecord."""
+    knowledge, _, _, _, _ = _step8_scenario(tmp_path)
+    count_before = len(knowledge.verifications)
+
+    knowledge.evidence_for_model("model A")
+    knowledge.evidence_for_model("model B")
+
+    assert len(knowledge.verifications) == count_before
+
+
+def test_l_summary_never_calls_the_laboratory(lab, tmp_path):
+    """TEST L: summarizing is a pure store query — physics is never invoked."""
+    knowledge, _, _, _, _ = _step8_scenario(tmp_path)
+    agent = ScientistAgent(lab, knowledge)
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    knowledge.evidence_for_model("model A")
+    knowledge.evidence_for_model("model B")
+
+    assert calls == []
+
+
+def test_m_evidence_summary_channel_is_truth_free():
+    """TEST M: the summary's home modules never import the universe layer —
+    no leakage into the summary. (The "secrets"/"y_true" vocabulary check is
+    scoped to prediction.py, where EvidenceSummary lives; knowledge.py's
+    docstring legitimately mentions "secrets" as a boundary concept.)"""
+    knowledge_module = sys.modules["pymo.scientist.knowledge"]
+    for module in (prediction_module, knowledge_module):
+        src = Path(module.__file__).read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not alias.name.startswith("pymo.universes")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("pymo.universes")
+    prediction_src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    assert "secrets" not in prediction_src and "y_true" not in prediction_src
+
+
+def test_step8_full_scenario_no_verdict_fields(tmp_path):
+    """The complete Step 8 deliverable: EvidenceSummary(A) and
+    EvidenceSummary(B) are correct, E1/E2/E3 link correctly, and there is no
+    winner, weight, elimination or belief anywhere in the summary."""
+    knowledge, _, _, _, _ = _step8_scenario(tmp_path)
+    summary_a = knowledge.evidence_for_model("model A")
+    summary_b = knowledge.evidence_for_model("model B")
+
+    # Model A: 3 independent experiments, 2 confirmed 1 refuted
+    assert summary_a.verification_count == 3
+    assert summary_a.confirmed_count == 2 and summary_a.refuted_count == 1
+    assert summary_a.independent_experiments == 3
+    assert summary_a.experiment_ids == ("E1", "E2", "E3")
+
+    # Model B: 2 independent experiments, 1 confirmed 1 refuted
+    assert summary_b.verification_count == 2
+    assert summary_b.confirmed_count == 1 and summary_b.refuted_count == 1
+    assert summary_b.independent_experiments == 2
+    assert summary_b.experiment_ids == ("E1", "E2")
+
+    # the summaries expose only evidence-accounting fields — never a verdict
+    allowed = {"model_ref", "prediction_ids", "experiment_ids",
+               "independent_experiments", "verification_count",
+               "confirmed_count", "refuted_count", "residuals", "statuses",
+               "evidence"}
+    for summary in (summary_a, summary_b):
+        assert set(dataclasses.asdict(summary)) == allowed
+        assert not any("winner" in str(v) or "survivor" in str(v)
+                       for v in summary.evidence)

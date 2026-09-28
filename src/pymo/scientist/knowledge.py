@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .prediction import (
+    EvidenceSummary,
     PredictionOutcome,
     PredictionRecord,
     VerificationRecord,
@@ -242,6 +243,46 @@ class KnowledgeBase:
     def verifications_for(self, prediction_id: str) -> list[VerificationRecord]:
         return [v for v in self.verifications.values()
                 if v.prediction_id == prediction_id]
+
+    # -- Genesis Step 8: per-model evidence summary (pure read) ---------------
+
+    def evidence_for_model(self, model_ref: str) -> EvidenceSummary:
+        """Aggregate a model's experimental evidence from persisted records.
+
+        Each persisted :class:`VerificationRecord` is traced back through its
+        ``prediction_id`` to the owning :class:`PredictionRecord`'s
+        ``model_ref`` — the model is NEVER guessed. A verification whose
+        prediction_id has no matching prediction (an orphaned record) has no
+        knowable model and is skipped explicitly; it never lands in any
+        model's summary.
+
+        Pure read: no record is created, edited or deleted, the knowledge
+        base is not saved, and the Laboratory is never consulted. The result
+        is fully deterministic — repeated queries return identical summaries.
+        """
+        model_of = {pid: record.model_ref
+                    for pid, record in self.predictions.items()}
+        matched: list[VerificationRecord] = []
+        for verification_id in sorted(self.verifications):  # deterministic order
+            verification = self.verifications[verification_id]
+            owner = model_of.get(verification.prediction_id)
+            if owner is None:
+                continue                       # orphaned: skip, never guess
+            if owner == model_ref:
+                matched.append(verification)
+        statuses = [v.status for v in matched]
+        return EvidenceSummary(
+            model_ref=model_ref,
+            prediction_ids=tuple(sorted({v.prediction_id for v in matched})),
+            experiment_ids=tuple(sorted({v.experiment_id for v in matched})),
+            independent_experiments=len({v.experiment_id for v in matched}),
+            verification_count=len(matched),
+            confirmed_count=statuses.count("confirmed"),
+            refuted_count=statuses.count("refuted"),
+            residuals=tuple(v.residual for v in matched),
+            statuses=tuple(statuses),
+            evidence=tuple(matched),
+        )
 
     def summary(self) -> str:
         if not self.laws:
