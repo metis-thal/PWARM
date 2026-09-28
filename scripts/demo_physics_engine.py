@@ -33,9 +33,9 @@ def demo_free_fall():
     """Demo 1: Free-fall + AI law discovery."""
     section("Demo 1: Free-Fall + AI Law Discovery")
 
-    from pymo.physics import WorldEngine, WorldEngineConfig
-    from pymo.physics.ai import WorldObserver, create_free_fall_experiment
-    from pymo.ai import LawDiscovery, ClosedLoopAI
+    from pwarm.physics import WorldEngine, WorldEngineConfig
+    from pwarm.physics.ai import WorldObserver, create_free_fall_experiment
+    from pwarm.ai import LawDiscovery, ClosedLoopAI
 
     # Create engine with rigid body solver
     config = WorldEngineConfig(
@@ -78,8 +78,8 @@ def demo_collision():
     """Demo 2: Two-body collision."""
     section("Demo 2: Two-Body Collision")
 
-    from pymo.physics import WorldEngine, WorldEngineConfig
-    from pymo.physics.ai import WorldObserver, create_collision_experiment
+    from pwarm.physics import WorldEngine, WorldEngineConfig
+    from pwarm.physics.ai import WorldObserver, create_collision_experiment
 
     config = WorldEngineConfig(
         dt=1/60,
@@ -122,8 +122,8 @@ def demo_conservation():
     """Demo 3: Energy conservation monitoring."""
     section("Demo 3: Energy Conservation")
 
-    from pymo.physics import WorldEngine, WorldEngineConfig
-    from pymo.physics.ai import WorldObserver
+    from pwarm.physics import WorldEngine, WorldEngineConfig
+    from pwarm.physics.ai import WorldObserver
 
     config = WorldEngineConfig(
         dt=1/60,
@@ -168,7 +168,7 @@ def demo_multi_physics():
     """Demo 4: Multi-physics coupling overview."""
     section("Demo 4: Multi-Physics Architecture Overview")
 
-    from pymo.physics import WorldEngine, WorldEngineConfig
+    from pwarm.physics import WorldEngine, WorldEngineConfig
 
     config = WorldEngineConfig(
         dt=1/60,

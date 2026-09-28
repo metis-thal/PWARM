@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 from numba import njit
 
-from pymo.kernel.integrators import VerletIntegrator, relative_drift
+from pwarm.kernel.integrators import VerletIntegrator, relative_drift
 
 
 @njit(cache=True)

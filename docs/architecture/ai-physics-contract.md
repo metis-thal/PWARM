@@ -26,9 +26,9 @@
 
 The AI's ONLY data channel is `ObservationRecord` — measurements, nothing
 else. Hidden truth lives in `UniverseSecrets`, loaded exclusively physics-side
-by `pymo.universes` and consumed exclusively by `pymo.scientist.experiment`
+by `pwarm.universes` and consumed exclusively by `pwarm.scientist.experiment`
 when it configures a world. `ScientistAgent`, `ScientistState`, and the
-designer never import `pymo.universes` and never receive a `Universe` object.
+designer never import `pwarm.universes` and never receive a `Universe` object.
 
 ## What the AI may see
 
@@ -54,7 +54,7 @@ designer never import `pymo.universes` and never receive a `Universe` object.
 1. **By construction** — `Laboratory` is the only object the AI holds; the
    universe is `Laboratory._universe` (private) and is never returned.
 2. **By test** — `tests/scientist/test_api_contract.py`:
-   - no AI-side module imports `pymo.universes`;
+   - no AI-side module imports `pwarm.universes`;
    - `ObservationRecord` fields are measurement-only;
    - artifacts written by the CLI carry no secret values
      (`tests/test_reproducibility.py::test_ai_artifacts_carry_no_secrets`).

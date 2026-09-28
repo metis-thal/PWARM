@@ -34,7 +34,7 @@ for _p in (str(_ROOT / "src"), str(_ROOT)):
 
 import numpy as np
 
-from pymo.scientist import (
+from pwarm.scientist import (
     REGISTRY,
     ExperimentDesigner,
     ExperimentSpec,
@@ -43,14 +43,14 @@ from pymo.scientist import (
     Mission,
     ScientistState,
 )
-from pymo.universes import load_universe
-from pymo.viz.gl_renderer import GLRenderer, RendererConfig
-from pymo.viz.snapshot import (
+from pwarm.universes import load_universe
+from pwarm.viz.gl_renderer import GLRenderer, RendererConfig
+from pwarm.viz.snapshot import (
     CameraState,
     DoubleBuffer,
     build_snapshot_from_physics_engine,
 )
-from pymo.viz.text_overlay import TextPanel
+from pwarm.viz.text_overlay import TextPanel
 
 KNOWLEDGE_PATH = Path("knowledge/universe_002.json")
 

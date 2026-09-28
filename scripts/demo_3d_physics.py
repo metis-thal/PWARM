@@ -29,8 +29,8 @@ import numpy as np
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from pymo.physics import WorldEngine, WorldEngineConfig
-from pymo.viz.snapshot import (
+from pwarm.physics import WorldEngine, WorldEngineConfig
+from pwarm.viz.snapshot import (
     CameraState, DoubleBuffer, SceneSnapshot,
     build_snapshot_from_physics_engine, build_model_matrix,
     InstanceData, MeshType, compute_aabb_sphere, compute_aabb_box,
@@ -91,7 +91,7 @@ def main():
         input("\nPress Enter to exit...")
         return 1
 
-    from pymo.viz.gl_renderer import GLRenderer, RendererConfig
+    from pwarm.viz.gl_renderer import GLRenderer, RendererConfig
 
     print("=" * 60)
     print("  PWARM 3D Physics Visualization")

@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pytest
 
-from pymo.scientist import (
+from pwarm.scientist import (
     REGISTRY,
     ExperimentBudget,
     ExperimentDesigner,
@@ -29,7 +29,7 @@ from pymo.scientist import (
     ScientistState,
     analyze_gap,
 )
-from pymo.universes import load_universe
+from pwarm.universes import load_universe
 
 MISSION = Mission(id="003", title="Science Under Constraints",
                   objective="Characterize Constrained World within budget",
@@ -120,7 +120,7 @@ def test_catalog_grants_once_and_refuses_mismatches():
     assert grant.budget["experiments"] == 2
     assert catalog.granted == ("fluid_tank",)
     assert catalog.grant(request) is None          # one grant only
-    from pymo.scientist import InstrumentRequest
+    from pwarm.scientist import InstrumentRequest
     assert catalog.grant(InstrumentRequest(
         capability="telepathy", instrument="fluid_tank",
         target_claims=("x",), observable="", reason="")) is None

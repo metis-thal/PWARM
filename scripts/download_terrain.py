@@ -80,7 +80,7 @@ def download_terrain_tiles(
             url = f"https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{zoom}/{tx}/{ty}.png"
             print(f"  Downloading tile z={zoom} x={tx} y={ty} ...")
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "pymo-terrain/1.0"})
+                req = urllib.request.Request(url, headers={"User-Agent": "pwarm-terrain/1.0"})
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     png_data = resp.read()
                 elev = decode_terrarium(png_data)
@@ -135,7 +135,7 @@ def main():
 
     print(f"\nElevation range: {elevation.min():.1f}m to {elevation.max():.1f}m")
 
-    # Save as numpy array (primary format for pymo)
+    # Save as numpy array (primary format for pwarm)
     npy_path = base + ".npy"
     np.save(npy_path, elevation)
     print(f"  Saved: {npy_path}")

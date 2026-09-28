@@ -17,14 +17,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pytest
 
-from pymo.scientist import (
+from pwarm.scientist import (
     ExperimentSpec,
     KnowledgeBase,
     Laboratory,
     Mission,
     ScientistAgent,
 )
-from pymo.universes import load_universe
+from pwarm.universes import load_universe
 
 
 @pytest.fixture(scope="module")

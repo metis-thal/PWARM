@@ -28,7 +28,7 @@ _UNIVERSE = {"001": "universe_001", "002": "universe_002", "003": "universe_003"
 def _run_envelope(mission: str) -> tuple:
     with tempfile.TemporaryDirectory() as td:
         sys.path.insert(0, str(_ROOT / "src"))
-        from pymo.cli import _run
+        from pwarm.cli import _run
         result = _run(mission, Path(td) / "knowledge.json")
     report = result["report"]
     assert report.status == "DISCOVERED", report.summary[-1500:]
@@ -36,7 +36,7 @@ def _run_envelope(mission: str) -> tuple:
 
 
 def _truth() -> dict:
-    from pymo.universes import load_universe
+    from pwarm.universes import load_universe
     truth: dict = {}
     for uid in _UNIVERSE.values():
         u = load_universe(uid)

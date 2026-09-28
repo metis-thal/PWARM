@@ -13,7 +13,7 @@ import itertools
 import numpy as np
 import pytest
 
-from pymo.physics import WorldEngine, WorldEngineConfig
+from pwarm.physics import WorldEngine, WorldEngineConfig
 
 G = 9.81
 DT = 1 / 60

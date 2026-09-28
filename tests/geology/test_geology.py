@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from pymo.geology import (
+from pwarm.geology import (
     GeologyGrid,
     GeologyGridConfig,
     GeologySolver,

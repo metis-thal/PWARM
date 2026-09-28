@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 from scipy.spatial import cKDTree
 
-from pymo.physics import WorldEngine, WorldEngineConfig
-from pymo.physics.solvers.sph_kernels import (
+from pwarm.physics import WorldEngine, WorldEngineConfig
+from pwarm.physics.solvers.sph_kernels import (
     neighbors_to_csr,
     sph_density,
     sph_forces,

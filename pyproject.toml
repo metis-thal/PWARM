@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-pwarm = "pymo.cli:main"
+pwarm = "pwarm.cli:main"
 
 [project.optional-dependencies]
 ai = [
@@ -44,7 +44,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-pymo = ["universes/*/config.yaml", "universes/*/rules.yaml"]
+pwarm = ["universes/*/config.yaml", "universes/*/rules.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

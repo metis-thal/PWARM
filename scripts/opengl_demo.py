@@ -23,12 +23,12 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
-from pymo.kernel.bodies3d import sphere_body, box_body, Material
-from pymo.kernel.world_engine import WorldEngine
-from pymo.rules.chemistry import ChemicalSystem
-from pymo.rules.fluid import create_water_column, SPHParams
-from pymo.viz.snapshot import DoubleBuffer, CameraState, build_snapshot_from_world
-from pymo.viz.gl_renderer import GLRenderer, RendererConfig
+from pwarm.kernel.bodies3d import sphere_body, box_body, Material
+from pwarm.kernel.world_engine import WorldEngine
+from pwarm.rules.chemistry import ChemicalSystem
+from pwarm.rules.fluid import create_water_column, SPHParams
+from pwarm.viz.snapshot import DoubleBuffer, CameraState, build_snapshot_from_world
+from pwarm.viz.gl_renderer import GLRenderer, RendererConfig
 
 
 def setup_scene() -> WorldEngine:

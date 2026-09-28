@@ -9,8 +9,8 @@ Usage:
 
 from __future__ import annotations
 
-from pymo.ai.closed_loop import ClosedLoopAI
-from pymo.ai.observer import collect_free_fall
+from pwarm.ai.closed_loop import ClosedLoopAI
+from pwarm.ai.observer import collect_free_fall
 
 
 def main() -> None:

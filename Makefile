@@ -9,13 +9,13 @@ export PYTHONPATH := src
 demo: demo-001            ## the stranger test: watch the AI discover gravity
 
 demo-001:                 ## Mission 001 — gravity discovery (headless)
-	$(PYTHON) -m pymo.cli demo 001
+	$(PYTHON) -m pwarm.cli demo 001
 
 demo-002:                 ## Mission 002 — autonomous material discovery (headless)
-	$(PYTHON) -m pymo.cli demo 002
+	$(PYTHON) -m pwarm.cli demo 002
 
 demo-003:                 ## Mission 003 — budget + instrument arc (headless)
-	$(PYTHON) -m pymo.cli demo 003
+	$(PYTHON) -m pwarm.cli demo 003
 
 test:                     ## full test suite
 	$(PYTHON) -m pytest tests/ -q

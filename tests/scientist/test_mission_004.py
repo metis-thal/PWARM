@@ -23,14 +23,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import numpy as np
 import pytest
 
-from pymo.scientist import (
+from pwarm.scientist import (
     REGISTRY,
     ExperimentSpec,
     Laboratory,
     ObservationRecord,
 )
-from pymo.scientist.experiments import immersion_test
-from pymo.universes import load_universe
+from pwarm.scientist.experiments import immersion_test
+from pwarm.universes import load_universe
 
 
 def _universe():
@@ -128,9 +128,9 @@ def test_immersion_module_never_imports_universes():
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                assert not alias.name.startswith("pymo.universes")
+                assert not alias.name.startswith("pwarm.universes")
         elif isinstance(node, ast.ImportFrom) and node.module:
-            assert not node.module.startswith("pymo.universes")
+            assert not node.module.startswith("pwarm.universes")
     assert "secrets" not in src      # contract guard for experiments/ modules
 
 

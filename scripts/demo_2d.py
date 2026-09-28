@@ -13,9 +13,9 @@ import argparse
 
 import numpy as np
 
-from pymo.kernel.bodies import Material, box_body, circle_body
-from pymo.kernel.world import World
-from pymo.viz.viewer import PhysicsViewer
+from pwarm.kernel.bodies import Material, box_body, circle_body
+from pwarm.kernel.world import World
+from pwarm.viz.viewer import PhysicsViewer
 
 
 def build_demo_world() -> World:

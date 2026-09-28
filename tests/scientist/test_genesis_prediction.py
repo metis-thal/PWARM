@@ -26,7 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pytest
 
-from pymo.scientist import (
+from pwarm.scientist import (
+    CompetitionState,
     ConditionBinding,
     ConditionComparison,
     ExperimentSpec,
@@ -45,11 +46,11 @@ from pymo.scientist import (
     rank_discriminating_conditions,
     verify_prediction,
 )
-from pymo.scientist import agent as agent_module
-from pymo.scientist import prediction as prediction_module
-from pymo.scientist import state as state_module
-from pymo.scientist.agent import proposal_to_spec
-from pymo.scientist.prediction import (
+from pwarm.scientist import agent as agent_module
+from pwarm.scientist import prediction as prediction_module
+from pwarm.scientist import state as state_module
+from pwarm.scientist.agent import proposal_to_spec
+from pwarm.scientist.prediction import (
     Prediction,
     PredictionOutcome,
     PredictionRecord,
@@ -58,7 +59,7 @@ from pymo.scientist.prediction import (
     prediction_from_belief,
     verify_commitment,
 )
-from pymo.universes import load_universe
+from pwarm.universes import load_universe
 
 MISSION = Mission(id="001", title="Discover Gravity", objective="",
                   target="gravity", unit="m/s^2")
@@ -156,9 +157,9 @@ def test_d_truth_unreachable_from_prediction_and_state():
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("pymo.universes")
+                    assert not alias.name.startswith("pwarm.universes")
             elif isinstance(node, ast.ImportFrom) and node.module:
-                assert not node.module.startswith("pymo.universes")
+                assert not node.module.startswith("pwarm.universes")
     prediction_src = Path(prediction_module.__file__).read_text(encoding="utf-8")
     assert "secrets" not in prediction_src and "y_true" not in prediction_src
     # and the adjudication channel is two objects wide — nothing else fits
@@ -376,7 +377,7 @@ def test_consecutive_confirmed_prediction_reflects_belief(tmp_path):
     new prediction 反映新 belief。
     使用非中点的 observed 以确保 midpoint 发生偏移。
     """
-    from pymo.scientist.prediction import prediction_from_belief
+    from pwarm.scientist.prediction import prediction_from_belief
 
     knowledge = KnowledgeBase(tmp_path / "c.json", universe="universe_001")
     state = ScientistState(("gravity",), knowledge)
@@ -479,16 +480,16 @@ def test_consecutive_refuted_no_recovery(tmp_path):
 
 
 def test_consecutive_updates_no_universe_access(tmp_path):
-    """TEST E: 连续学习过程中 prediction.py / state.py 不访问 pymo.universes。"""
+    """TEST E: 连续学习过程中 prediction.py / state.py 不访问 pwarm.universes。"""
     for mod in (state_module, prediction_module):
         src = Path(mod.__file__).read_text(encoding="utf-8")
         tree = ast.parse(src)
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("pymo.universes")
+                    assert not alias.name.startswith("pwarm.universes")
             elif isinstance(node, ast.ImportFrom) and node.module:
-                assert not node.module.startswith("pymo.universes")
+                assert not node.module.startswith("pwarm.universes")
 
 
 # -- append-only history + additive schema ----------------------------------
@@ -582,7 +583,7 @@ def test_model_prediction_is_deterministic():
 
 
 def test_model_prediction_no_universe_access():
-    """TEST F: model prediction 代码不访问 pymo.universes。"""
+    """TEST F: model prediction 代码不访问 pwarm.universes。"""
     import ast
     import pathlib
     src = pathlib.Path(
@@ -591,9 +592,9 @@ def test_model_prediction_no_universe_access():
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                assert not alias.name.startswith("pymo.universes")
+                assert not alias.name.startswith("pwarm.universes")
         elif isinstance(node, ast.ImportFrom) and node.module:
-            assert not node.module.startswith("pymo.universes")
+            assert not node.module.startswith("pwarm.universes")
     src_str = src
     assert "secrets" not in src_str
     assert "y_true" not in src_str
@@ -609,14 +610,14 @@ def test_existing_prediction_flow_unchanged():
     import pathlib
     import tempfile
 
-    from pymo.scientist.knowledge import KnowledgeBase
-    from pymo.scientist.prediction import (
+    from pwarm.scientist.knowledge import KnowledgeBase
+    from pwarm.scientist.prediction import (
         Prediction,
         PredictionRecord,
         commitment_hash,
         prediction_from_belief,
     )
-    from pymo.scientist.state import ScientistState
+    from pwarm.scientist.state import ScientistState
     assert [f.name for f in dataclasses.fields(PredictionRecord)] == [
         "prediction_id", "model_ref", "claim", "spec_ref", "predicted",
         "tolerance", "committed_hash", "seq", "created_at", "status"]
@@ -644,13 +645,13 @@ def test_mission_regression_unchanged():
     import pathlib
     import tempfile
 
-    from pymo.scientist import (
+    from pwarm.scientist import (
         KnowledgeBase,
         Laboratory,
         Mission,
         ScientistAgent,
     )
-    from pymo.universes import load_universe
+    from pwarm.universes import load_universe
 
     MISSION = Mission(id="001", title="Discover Gravity", objective="",
                        target="gravity", unit="m/s^2")
@@ -893,9 +894,9 @@ def test_execution_channel_stays_ai_side():
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                assert not alias.name.startswith("pymo.universes")
+                assert not alias.name.startswith("pwarm.universes")
         elif isinstance(node, ast.ImportFrom) and node.module:
-            assert not node.module.startswith("pymo.universes")
+            assert not node.module.startswith("pwarm.universes")
 
 
 def test_no_verdict_no_belief_no_ledger(lab, tmp_path):
@@ -1027,9 +1028,9 @@ def test_binding_channel_is_truth_free():
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("pymo.universes")
+                    assert not alias.name.startswith("pwarm.universes")
             elif isinstance(node, ast.ImportFrom) and node.module:
-                assert not node.module.startswith("pymo.universes")
+                assert not node.module.startswith("pwarm.universes")
 
 
 def test_binding_execution_verifies_nothing(lab, tmp_path):
@@ -1102,9 +1103,9 @@ def test_comparison_input_channel_is_truth_free():
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                assert not alias.name.startswith("pymo.universes")
+                assert not alias.name.startswith("pwarm.universes")
         elif isinstance(node, ast.ImportFrom) and node.module:
-            assert not node.module.startswith("pymo.universes")
+            assert not node.module.startswith("pwarm.universes")
 
 
 def test_comparison_computes_no_verdict(lab, tmp_path):
@@ -1233,9 +1234,9 @@ def test_reduction_channel_is_truth_free():
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                assert not alias.name.startswith("pymo.universes")
+                assert not alias.name.startswith("pwarm.universes")
         elif isinstance(node, ast.ImportFrom) and node.module:
-            assert not node.module.startswith("pymo.universes")
+            assert not node.module.startswith("pwarm.universes")
 
 
 def test_reduction_produces_no_verdict(lab, tmp_path):
@@ -1356,9 +1357,9 @@ def test_verification_channel_is_truth_free():
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                assert not alias.name.startswith("pymo.universes")
+                assert not alias.name.startswith("pwarm.universes")
         elif isinstance(node, ast.ImportFrom) and node.module:
-            assert not node.module.startswith("pymo.universes")
+            assert not node.module.startswith("pwarm.universes")
 
 
 def test_verification_writes_nothing(lab, tmp_path):
@@ -1542,15 +1543,15 @@ def test_commitment_phase_writes_only_commitments(lab, tmp_path):
 
 def test_commitment_channel_is_truth_free():
     """TESTS L+M: the commitment path's home modules stay universe-free."""
-    knowledge_module = sys.modules["pymo.scientist.knowledge"]
+    knowledge_module = sys.modules["pwarm.scientist.knowledge"]
     for module in (prediction_module, agent_module, knowledge_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("pymo.universes")
+                    assert not alias.name.startswith("pwarm.universes")
             elif isinstance(node, ast.ImportFrom) and node.module:
-                assert not node.module.startswith("pymo.universes")
+                assert not node.module.startswith("pwarm.universes")
 
 
 def test_commitments_precede_execution(lab, tmp_path):
@@ -1786,15 +1787,15 @@ def test_reverification_appends_no_aggregation(lab, tmp_path):
 
 def test_competition_verification_channel_is_truth_free():
     """TEST N: the verification path's home modules stay universe-free."""
-    knowledge_module = sys.modules["pymo.scientist.knowledge"]
+    knowledge_module = sys.modules["pwarm.scientist.knowledge"]
     for module in (prediction_module, agent_module, knowledge_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("pymo.universes")
+                    assert not alias.name.startswith("pwarm.universes")
             elif isinstance(node, ast.ImportFrom) and node.module:
-                assert not node.module.startswith("pymo.universes")
+                assert not node.module.startswith("pwarm.universes")
 
 
 def test_gravity_verification_flow_unchanged(lab, tmp_path):
@@ -2074,15 +2075,15 @@ def test_m_evidence_summary_channel_is_truth_free():
     no leakage into the summary. (The "secrets"/"y_true" vocabulary check is
     scoped to prediction.py, where EvidenceSummary lives; knowledge.py's
     docstring legitimately mentions "secrets" as a boundary concept.)"""
-    knowledge_module = sys.modules["pymo.scientist.knowledge"]
+    knowledge_module = sys.modules["pwarm.scientist.knowledge"]
     for module in (prediction_module, knowledge_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("pymo.universes")
+                    assert not alias.name.startswith("pwarm.universes")
             elif isinstance(node, ast.ImportFrom) and node.module:
-                assert not node.module.startswith("pymo.universes")
+                assert not node.module.startswith("pwarm.universes")
     prediction_src = Path(prediction_module.__file__).read_text(encoding="utf-8")
     assert "secrets" not in prediction_src and "y_true" not in prediction_src
 
@@ -2321,15 +2322,15 @@ def test_step9_j_no_belief_change(tmp_path):
 def test_step9_k_no_truth_leakage():
     """TEST K: the independent-evidence logic lives in universe-free modules —
     no truth vocabulary, no universe import."""
-    knowledge_module = sys.modules["pymo.scientist.knowledge"]
+    knowledge_module = sys.modules["pwarm.scientist.knowledge"]
     for module in (prediction_module, knowledge_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("pymo.universes")
+                    assert not alias.name.startswith("pwarm.universes")
             elif isinstance(node, ast.ImportFrom) and node.module:
-                assert not node.module.startswith("pymo.universes")
+                assert not node.module.startswith("pwarm.universes")
     prediction_src = Path(prediction_module.__file__).read_text(encoding="utf-8")
     assert "secrets" not in prediction_src and "y_true" not in prediction_src
 
@@ -2373,3 +2374,205 @@ def test_step9_combined_history_counts_everything(tmp_path):
     assert len([v for v in summary.independent_evidence
                 if v.prediction_id == p1[0].prediction_id
                 and v.experiment_id == "E1"]) == 1
+
+
+# -- Genesis Step 10: competition state (facts per model + experiment) --------
+#
+# The statistical unit is (model_ref, experiment_id): one experiment is one
+# physics observation. Confirmed/refuted are FACTS, not scores — no winner,
+# no weight, no probability, no elimination, ever, at this layer.
+
+def _step10_scenario(tmp_path):
+    """The Step 10 case: Model A (E1/C, E2/C, E3/R) and Model B (E1/R,
+    E2/C, E3/C) — shared experiments E1/E2, independent E3 verdicts."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model A", [
+        ("linear", 5.0, 0.5, "E1", 5.0),        # E1 -> CONFIRMED
+        ("linear", 6.0, 0.5, "E2", 6.0),        # E2 -> CONFIRMED
+        ("quadratic", 9.0, 0.5, "E3", 8.0),     # E3 -> REFUTED
+    ])
+    _commit_and_verify(knowledge, "model B", [
+        ("quadratic", 8.0, 0.5, "E1", 9.0),     # E1 -> REFUTED
+        ("linear", 6.0, 0.5, "E2", 6.0),        # E2 -> CONFIRMED
+        ("linear", 7.0, 0.5, "E3", 7.0),        # E3 -> CONFIRMED
+    ])
+    return knowledge
+
+
+def test_full_scenario_yields_correct_states(tmp_path):
+    """The complete case: both models' states count 3 experiments with
+    the right confirmed/refuted splits, conflicts empty."""
+    knowledge = _step10_scenario(tmp_path)
+    state_a = knowledge.competition_state("model A")
+    state_b = knowledge.competition_state("model B")
+
+    assert state_a.model_ref == "model A"
+    assert state_a.experiment_ids == ("E1", "E2", "E3")
+    assert state_a.independent_experiment_count == 3
+    assert state_a.confirmed_count == 2 and state_a.refuted_count == 1
+    assert state_a.conflicts == ()
+
+    assert state_b.experiment_ids == ("E1", "E2", "E3")
+    assert state_b.independent_experiment_count == 3
+    assert state_b.confirmed_count == 2 and state_b.refuted_count == 1
+    assert state_b.conflicts == ()
+
+
+def test_three_independent_experiments_counted_once_each(tmp_path):
+    """TEST A: one model, E1 confirmed + E2 confirmed + E3 refuted ->
+    exactly 3 independent experiments."""
+    knowledge = _step10_scenario(tmp_path)
+    state = knowledge.competition_state("model A")
+    assert state.independent_experiment_count == 3
+    assert state.experiment_ids == ("E1", "E2", "E3")
+
+
+def test_reverification_does_not_add_experiments(tmp_path):
+    """TEST B: re-verifying the same prediction against the same
+    experiment adds a VerificationRecord but NO experiment."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model A", [("linear", 5.0, 0.5, "E1", 5.0)])
+    # re-verify the SAME prediction against the SAME experiment
+    prediction = next(iter(knowledge.predictions.values()))
+    outcome = PredictionOutcome(claim="linear", predicted=5.0, observed=5.01,
+                                residual=0.01, status="confirmed")
+    knowledge.record_verification(prediction.prediction_id, "E1", outcome)
+
+    state = knowledge.competition_state("model A")
+    assert state.independent_experiment_count == 1
+    assert state.confirmed_count == 1
+    assert len(knowledge.verifications) == 2        # both records persisted
+
+
+def test_same_model_different_experiments_counted_separately(tmp_path):
+    """TEST C: one model across E1/E2/E3 -> three distinct experiments."""
+    knowledge = _step10_scenario(tmp_path)
+    state = knowledge.competition_state("model A")
+    assert state.experiment_ids == ("E1", "E2", "E3")
+
+
+def test_shared_experiment_counts_once_per_model(tmp_path):
+    """TEST D: E1 is shared by both models — each state lists it once,
+    with its OWN verdict (A confirmed, B refuted); the shared observation
+    is never mistaken for two physics experiments within one model."""
+    knowledge = _step10_scenario(tmp_path)
+    state_a = knowledge.competition_state("model A")
+    state_b = knowledge.competition_state("model B")
+    assert "E1" in state_a.experiment_ids and "E1" in state_b.experiment_ids
+    assert state_a.experiment_ids.count("E1") == 1
+    assert state_b.experiment_ids.count("E1") == 1
+    # each model's own verdict on E1 comes from its own prediction
+    assert state_a.confirmed_count == 2 and state_a.refuted_count == 1
+    assert state_b.refuted_count == 1
+
+
+def test_consistent_predictions_collapse_to_one_experiment(tmp_path):
+    """TEST E (agreement): the same model, two predictions, same
+    experiment, both confirmed -> ONE experiment, no conflict."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model A", [
+        ("linear", 5.0, 0.5, "E1", 5.0),
+        ("linear", 5.02, 0.5, "E1", 5.0),       # second prediction, same E1
+    ])
+    state = knowledge.competition_state("model A")
+    assert state.independent_experiment_count == 1
+    assert state.confirmed_count == 1 and state.refuted_count == 0
+    assert state.conflicts == ()
+
+
+def test_conflicting_predictions_reported_not_guessed(tmp_path):
+    """TEST E (conflict): the same model, two predictions, same
+    experiment, disagreeing verdicts -> the experiment is reported as a
+    conflict and counted NOWHERE else; no tie-break is invented."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model A", [
+        ("linear", 5.0, 0.5, "E1", 5.0),        # confirmed
+        ("quadratic", 25.0, 0.5, "E1", 5.0),    # refuted, same E1
+    ])
+    state = knowledge.competition_state("model A")
+    assert state.independent_experiment_count == 1
+    assert state.conflicts == ("E1",)
+    assert state.confirmed_count == 0 and state.refuted_count == 0
+
+
+def test_state_fields_are_facts_not_scores(tmp_path):
+    """TEST F: the state carries exactly the fact fields — no winner, no
+    weight, no probability, no elimination, no score of any kind."""
+    _step10_scenario(tmp_path)
+    assert [f.name for f in dataclasses.fields(CompetitionState)] == [
+        "model_ref", "experiment_ids", "independent_experiment_count",
+        "confirmed_count", "refuted_count", "conflicts",
+        "provenance", "verifications"]
+
+
+def test_state_is_deterministic(tmp_path):
+    """TEST G: repeated queries return byte-identical states."""
+    knowledge = _step10_scenario(tmp_path)
+    assert (knowledge.competition_state("model A")
+            == knowledge.competition_state("model A"))
+
+
+def test_state_query_writes_nothing(tmp_path):
+    """TEST H: querying a state does not modify the knowledge base — the
+    persisted records are identical before and after."""
+    knowledge = _step10_scenario(tmp_path)
+    predictions_before = dict(knowledge.predictions)
+    verifications_before = dict(knowledge.verifications)
+
+    knowledge.competition_state("model A")
+
+    assert knowledge.predictions == predictions_before
+    assert knowledge.verifications == verifications_before
+
+
+def test_state_query_never_calls_the_laboratory(tmp_path):
+    """TEST I: the state is a pure read over persisted records."""
+    knowledge = _step10_scenario(tmp_path)
+    lab = Laboratory(load_universe("universe_001"))
+    calls: list[ExperimentSpec] = []
+    real_run = lab.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    lab.run_experiment = spy_run
+    knowledge.competition_state("model A")
+    assert calls == []
+
+
+def test_state_query_leaves_belief_unchanged(tmp_path):
+    """TEST J: querying a state does not touch the scientist's beliefs."""
+    knowledge = _step10_scenario(tmp_path)
+    state = ScientistState(("gravity",), knowledge)
+    span_before = state.belief("gravity").span
+    knowledge.competition_state("model A")
+    assert state.belief("gravity").span == span_before
+
+
+def test_state_channel_is_truth_free():
+    """TEST K: the state's home modules stay universe-free."""
+    knowledge_module = sys.modules["pwarm.scientist.knowledge"]
+    for module in (prediction_module, knowledge_module):
+        src = Path(module.__file__).read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not alias.name.startswith("pwarm.universes")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("pwarm.universes")
+
+
+def test_provenance_traces_model_to_verification(tmp_path):
+    """Full provenance: every (prediction_id, experiment_id,
+    verification_id) triple in a state resolves to real persisted
+    records owned by that model."""
+    knowledge = _step10_scenario(tmp_path)
+    state = knowledge.competition_state("model A")
+    assert len(state.provenance) == 3
+    for prediction_id, experiment_id, verification_id in state.provenance:
+        prediction = knowledge.predictions[prediction_id]
+        assert prediction.model_ref == "model A"
+        verification = knowledge.verifications[verification_id]
+        assert verification.prediction_id == prediction_id
+        assert verification.experiment_id == experiment_id

@@ -1,6 +1,6 @@
-# pymo Data Structures & Algorithms / pymo数据结构与算法
+# pwarm Data Structures & Algorithms / pwarm数据结构与算法
 
-Complete bilingual (中英双语) reference for all core data structures and algorithms in pymo.
+Complete bilingual (中英双语) reference for all core data structures and algorithms in pwarm.
 
 ---
 
@@ -17,6 +17,7 @@ Complete bilingual (中英双语) reference for all core data structures and alg
 9. [SPH Fluid / SPH流体](#9-sph-fluid--sph流体)
 10. [Fracture Mechanics / 断裂力学](#10-fracture-mechanics--断裂力学)
 11. [Symbolic Regression / 符号回归](#11-symbolic-regression--符号回归)
+12. [Genesis: Prediction–Commitment–Verification / 预测-承诺-验证](#12-genesis-predictioncommitmentverification--预测-承诺-验证)
 
 ---
 
@@ -25,7 +26,7 @@ Complete bilingual (中英双语) reference for all core data structures and alg
 ### Data Structure / 数据结构
 
 ```
-Body (src/pymo/kernel/bodies.py)
+Body (src/pwarm/kernel/bodies.py)
 ├── Kinematic State / 运动状态
 │   ├── pos: np.ndarray (2,)      # position / 位置
 │   ├── vel: np.ndarray (2,)      # velocity / 速度
@@ -95,7 +96,7 @@ KE = 0.5 * m * |v|² + 0.5 * I * ω²
 ### Data Structure / 数据结构
 
 ```
-Body (src/pymo/kernel/bodies3d.py)
+Body (src/pwarm/kernel/bodies3d.py)
 ├── Kinematic State / 运动状态
 │   ├── pos: np.ndarray (3,)      # position / 位置
 │   ├── vel: np.ndarray (3,)      # velocity / 速度
@@ -859,6 +860,43 @@ AI模型是真值的学习近似。
 | SPH | O(N²) | Mass exact / 质量 | rules.fluid |
 | Rankine Fracture | O(contacts) | Mass exact / 质量 | rules.fracture |
 | Symbolic Regression | O(pop × gen) | - | ai.law_discovery |
+| Genesis adjudication | O(1) per verdict | - | scientist.prediction |
+| Competition state aggregation | O(verifications) | - | scientist.prediction |
+
+
+## 12. Genesis: Prediction–Commitment–Verification / 预测-承诺-验证
+
+The scientist layer's epistemic data structures — eleven frozen dataclasses
+forming a hash-anchored hypothesis-testing ledger (all AI-side,
+measurement-only; see ARCHITECTURE.md §Scientist Layer). / 科学家层的认识论
+数据结构：十一个冻结 dataclass 构成 hash 锚定的假设检验账本。
+
+| Structure / 结构 | Essential fields / 关键字段 | Invariants / 不变式 |
+|---|---|---|
+| `Prediction` | claim, value, tolerance, source | in-memory guess; band = value ± tolerance |
+| `PredictionRecord` | prediction_id, model_ref, claim, spec_ref, predicted, tolerance, committed_hash, seq, created_at, status | sha256 over the 5 scientific fields (seq/created_at/status outside); append-only; status open → confirmed/refuted once |
+| `VerificationRecord` | verification_id, prediction_id, experiment_id, observed, residual, status, evidence | one per (prediction, experiment) verification; residual = observed − predicted |
+| `ScientificModel` | model_id, params | formula resolved by model_id via `_FORMULAS` |
+| `ConditionBinding` | mapping: model var → spec param | declared data; unmapped variable → ValueError |
+| `OutputBinding` | mapping: model output → record field | targets limited to measurement channels {t, z, vx} |
+| `ConditionComparison` | conditions, predictions, disagreement | ranking unit; disagreement = value spread (max − min) |
+| `ComparisonInput` | prediction, field, observed | read-only alignment of prediction ↔ channel |
+| `ObservationReduction` | channel, rule | rule "first" = channel[0] (= h − g·dt² for drop z); unsupported rule → ValueError |
+| `EvidenceSummary` | counts + independent_evidence | unit = (prediction_id, experiment_id); orphaned verifications skipped |
+| `CompetitionState` | experiment_ids, confirmed/refuted/conflicts, provenance, verifications | unit = (model_ref, experiment_id); verdict disagreement → conflict, never tie-broken |
+
+**Adjudication rule (single source: `verify_prediction`)** / 裁决规则（单一来源）：
+
+```
+residual = observed − predicted
+CONFIRMED ⟺ |residual| ≤ tolerance        (tolerance comes from the prediction,
+                                           never adjusted to fit the observation)
+```
+
+**Facts, not scores** / 事实而非评分：no winner, weight, probability or
+elimination exists in these structures — model-survival semantics are a
+later decision on top of `CompetitionState`. / 这些结构中没有赢家、权重、
+概率与淘汰——模型存活语义是 CompetitionState 之上的后续决策。
 
 ---
 

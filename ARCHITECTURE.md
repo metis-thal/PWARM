@@ -14,7 +14,7 @@
 ## Four-Layer Architecture (Genesis-inspired)
 
 ```
-pymo/
+pwarm/
 ├── compiler/          # [Future] Python → CUDA/Metal/Vulkan (Quadrants-style)
 ├── render/            # Visualization: GPU instancing, PBR, ray-tracing, camera sensors
 ├── physics/           # Unified multi-physics engine (THIS LAYER)
@@ -263,6 +263,14 @@ class TimeStepper:
 ---
 
 ## AI Layer (Observation → Hypothesis → Verification → Experiment)
+
+> ⚠️ **Legacy design record.** The modules below (`ai/observer.py`,
+> `ai/closed_loop.py`) date from the removed `pwarm.kernel` era and are kept
+> only as a design snapshot — see
+> [docs/architecture/deprecated-kernel.md](docs/architecture/deprecated-kernel.md).
+> The live AI layer is **`pwarm/scientist/`** — see
+> ["Scientist Layer (Genesis)"](#scientist-layer-genesis--the-aiphysics-loop)
+> at the end of this document, plus `ai/law_discovery.py` (still live).
 
 ```python
 # ai/observer.py
@@ -592,3 +600,58 @@ class WorldEngine:
 6. **CCD refinement** — Swept volume computation for fast-moving objects
 7. **Compiler layer** — Python → CUDA/Metal/Vulkan (Quadrants-style)
 8. **Nyx renderer integration** — Replace PyVista with Nyx for production rendering
+---
+
+## Scientist Layer (Genesis) — The AI↔Physics Loop
+
+The live AI layer is `pwarm/scientist/` — a strict measurement-only boundary
+([ai-physics-contract.md](docs/architecture/ai-physics-contract.md)): the AI
+proposes, physics executes, the AI observes. The Genesis arc (Steps 1–10) adds
+the epistemic spine: predictions are **committed** (sha256-anchored,
+append-only) before the experiment runs, adjudicated **independently**
+against one observation, and aggregated into a **provenance-complete
+evidence ledger** — facts, never scores.
+
+```
+ScientistState.beliefs
+      ↓ prediction_from_belief            (Step 2: predictions from the self-model)
+Prediction ──commit──▶ PredictionRecord   (Steps 1/6: sha256, append-only, BEFORE physics)
+      │                        │
+      │       Laboratory.run_experiment(ExperimentSpec)   ← runs ONCE
+      │                        │
+      ▼                        ▼
+ConditionBinding ─▶ ExperimentSpec      ObservationRecord
+                                        │  OutputBinding (Step 5A)
+                                        ▼  ObservationReduction (Step 5B-1, rule "first")
+                              scalar observed
+                                        ▼  verify_prediction (Step 5B-2, single rule)
+                    PredictionOutcome → CONFIRMED / REFUTED
+                                        ▼  record_verification (per committed model, Step 7)
+                    VerificationRecord ledger
+                                        ▼  evidence_for_model / competition_state (Steps 8–10)
+                    EvidenceSummary → CompetitionState  (facts per model × experiment)
+```
+
+Key invariants (structurally enforced by tests):
+
+- **Commitment before observation** — the hash anchors the five scientific
+  fields; a committed prediction can never be silently edited, only superseded.
+- **Two-vocabulary contracts** — `ConditionBinding` (model variable →
+  ExperimentSpec parameter) and `OutputBinding` (model output → observation
+  field) are declared data; unmapped or out-of-vocabulary names fail loudly.
+- **One experiment, many verdicts** — every committed prediction is
+  adjudicated independently against the single record; the statistical unit
+  of model evidence is `(model_ref, experiment_id)`.
+- **Facts, not scores** — no winner, weight, probability or elimination
+  exists anywhere in the layer; disagreements between a model's own
+  predictions are reported as `conflicts`, never tie-broken.
+
+| module | role |
+|---|---|
+| `agent.py` | The scientific-method loop: predict → commit → execute → verify → learn |
+| `knowledge.py` | Civilization knowledge: laws + the append-only commitment/verification ledger + evidence aggregation |
+| `prediction.py` | Genesis core: commitments, adjudication, both bindings, observation reduction, competition state |
+| `state.py` | Self-model: uncertainty intervals per manifest parameter |
+| `designer.py` + `information.py` + `budget.py` + `experiment_value.py` | Value-ranked experiment selection under a live budget |
+| `instrument.py` | Gap analysis → instrument request → catalog grant |
+| `experiments/` | drop / slide / buoyancy / immersion apparatus |

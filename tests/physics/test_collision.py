@@ -9,14 +9,14 @@ These tests lock in the contact conventions that the rigid solver depends on:
 import numpy as np
 import pytest
 
-from pymo.physics import (
+from pwarm.physics import (
     CollisionShapeComponent,
     CollisionSystem,
     EntityID,
     WorldEngine,
     WorldEngineConfig,
 )
-from pymo.physics.collision import AABB, SAPBroadPhase
+from pwarm.physics.collision import AABB, SAPBroadPhase
 
 # ---------------------------------------------------------------------------
 # Helpers

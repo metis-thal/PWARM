@@ -33,13 +33,13 @@ from experiments.free_fall_ai.experiment import (
     FreeFallConfig,
     FreeFallExperiment,
 )
-from pymo.viz.gl_renderer import GLRenderer, RendererConfig
-from pymo.viz.snapshot import (
+from pwarm.viz.gl_renderer import GLRenderer, RendererConfig
+from pwarm.viz.snapshot import (
     CameraState,
     DoubleBuffer,
     build_snapshot_from_physics_engine,
 )
-from pymo.viz.text_overlay import TextPanel
+from pwarm.viz.text_overlay import TextPanel
 
 
 def _panel_lines(rep: DiscoveryReport, exp: FreeFallExperiment) -> list:

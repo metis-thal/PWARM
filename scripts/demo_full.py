@@ -17,11 +17,11 @@ import os
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from pymo.kernel.bodies3d import sphere_body, box_body, Material
-from pymo.kernel.world3d import World3D
-from pymo.rules.chemistry import ChemicalSystem, step_chemistry
-from pymo.rules.ecology import create_ecology_system, couple_body_environment
-from pymo.rules.thermal import BodyThermalSystem
+from pwarm.kernel.bodies3d import sphere_body, box_body, Material
+from pwarm.kernel.world3d import World3D
+from pwarm.rules.chemistry import ChemicalSystem, step_chemistry
+from pwarm.rules.ecology import create_ecology_system, couple_body_environment
+from pwarm.rules.thermal import BodyThermalSystem
 
 
 def main():
@@ -117,7 +117,7 @@ def main():
     ecology = create_ecology_system(latitude_deg=45.0, longitude_deg=0.0)
     
     # Add bodies to ecology (use 2D-compatible circle_body for ecology coupling)
-    from pymo.kernel.bodies import circle_body, Material as Mat2D
+    from pwarm.kernel.bodies import circle_body, Material as Mat2D
     iron_2d = circle_body([0, 0], 0.5, mass=7.8, material=Mat2D(specific_heat=450.0, thermal_conductivity=80.0))
     iron_2d.temperature = iron_ball.temperature
     iron_eco = ecology.add_body(iron_2d, albedo=0.3, water_mass=0.0)

@@ -2,7 +2,7 @@ import ray
 
 ray.init(num_cpus=2, ignore_reinit_error=True)
 
-from pymo.parallel.ray_parallel import SimulationConfig, run_single_simulation
+from pwarm.parallel.ray_parallel import SimulationConfig, run_single_simulation
 
 # Test single simulation
 config = SimulationConfig(

@@ -1,6 +1,6 @@
-# pymo User Guide / pymo用户手册
+# pwarm User Guide / pwarm用户手册
 
-Complete bilingual (中英双语) guide to using the pymo physics simulation framework.
+Complete bilingual (中英双语) guide to using the pwarm physics simulation framework.
 
 ---
 
@@ -16,6 +16,7 @@ Complete bilingual (中英双语) guide to using the pymo physics simulation fra
 8. [Visualization / 可视化](#8-visualization--可视化)
 9. [Parallel Simulation / 并行模拟](#9-parallel-simulation--并行模拟)
 10. [API Reference / API参考](#10-api-reference--api参考)
+11. [Genesis: Model Competition / Genesis：模型竞争](#11-genesis-model-competition--genesis模型竞争)
 
 ---
 
@@ -36,7 +37,7 @@ SPH流体模拟建议4GB+内存
 ```bash
 # Clone the repository / 克隆仓库
 git clone <repo-url>
-cd pymo
+cd pwarm
 
 # Create virtual environment / 创建虚拟环境
 python -m venv .venv
@@ -64,9 +65,9 @@ pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 
 ## 2. Architecture Overview / 架构概览
 
-pymo follows a strict four-layer architecture with one rule: **the physics kernel is ground truth; everything else is a learned or extended approximation.**
+pwarm follows a strict four-layer architecture with one rule: **the physics kernel is ground truth; everything else is a learned or extended approximation.**
 
-pymo采用严格的四层架构，核心规则是：**物理内核是真值；其他一切都是学习或扩展的近似。**
+pwarm采用严格的四层架构，核心规则是：**物理内核是真值；其他一切都是学习或扩展的近似。**
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -120,7 +121,7 @@ World.step(n)
 ### Creating Bodies / 创建刚体
 
 ```python
-from pymo.kernel.bodies import circle_body, box_body, Body, Material
+from pwarm.kernel.bodies import circle_body, box_body, Body, Material
 import numpy as np
 
 # Circle body / 圆形刚体
@@ -180,7 +181,7 @@ class Material:
 ### World Simulation / 世界模拟
 
 ```python
-from pymo.kernel.world import World
+from pwarm.kernel.world import World
 import numpy as np
 
 # Create world / 创建世界
@@ -229,11 +230,11 @@ ball.apply_torque(np.array([0.0, 0.0, 5.0]))  # 3D only / 仅3D
 ### 3D Shapes / 3D形状
 
 ```python
-from pymo.kernel.bodies3d import (
+from pwarm.kernel.bodies3d import (
     sphere_body, box_body, cylinder_body, convex_hull_body,
     Material, Body, ShapeType
 )
-from pymo.kernel.math3d import quat_from_axis_angle
+from pwarm.kernel.math3d import quat_from_axis_angle
 import numpy as np
 
 # Sphere / 球体
@@ -274,7 +275,7 @@ hull = convex_hull_body(
 ### 3D World / 3D世界
 
 ```python
-from pymo.kernel.world3d import World3D
+from pwarm.kernel.world3d import World3D
 import numpy as np
 
 world = World3D(
@@ -295,7 +296,7 @@ print(f"Angular momentum: {world.total_angular_momentum()}")
 ### Quaternion Operations / 四元数运算
 
 ```python
-from pymo.kernel.math3d import (
+from pwarm.kernel.math3d import (
     quat_identity, quat_mul, quat_conj, quat_normalize,
     quat_from_axis_angle, quat_to_axis_angle,
     quat_rotate, mat3_from_quat, quat_slerp
@@ -327,7 +328,7 @@ The 2D kernel uses the **Separating Axis Theorem (SAT)** for convex polygon coll
 2D内核使用**分离轴定理（SAT）**进行凸多边形碰撞检测，使用面裁剪生成多接触点。
 
 ```python
-from pymo.kernel.collision import detect_collision, Contact
+from pwarm.kernel.collision import detect_collision, Contact
 
 # Automatic detection between any shape pair / 自动检测任意形状对
 contacts = detect_collision(body_a, body_b)
@@ -349,7 +350,7 @@ The 3D kernel uses **GJK (Gilbert-Johnson-Keerthi)** for intersection testing an
 3D内核使用**GJK算法**进行相交测试，使用**EPA算法**计算穿透深度。
 
 ```python
-from pymo.kernel.collision3d import detect_collision, gjk_intersect, epa
+from pwarm.kernel.collision3d import detect_collision, gjk_intersect, epa
 
 # Full detection (GJK + EPA) / 完整检测
 contacts = detect_collision(body_a, body_b)
@@ -378,7 +379,7 @@ The impulse-based solver conserves momentum by applying equal-and-opposite impul
 基于冲量的求解器通过在接触点施加等大反向冲量来守恒动量。
 
 ```python
-from pymo.kernel.solver import solve_contacts
+from pwarm.kernel.solver import solve_contacts
 
 # Solve contacts (mutates body velocities in place) / 求解接触（就地修改速度）
 solve_contacts(contacts, iterations=10, baumgarte=0.2)
@@ -410,8 +411,8 @@ Fourier's law between contacting bodies: `dQ/dt = k_eff * A * ΔT / d`
 接触刚体间的傅里叶定律：`dQ/dt = k_eff * A * ΔT / d`
 
 ```python
-from pymo.rules.thermal import BodyThermalSystem, TemperatureField, diffuse_field
-from pymo.kernel.bodies import circle_body, Material
+from pwarm.rules.thermal import BodyThermalSystem, TemperatureField, diffuse_field
+from pwarm.kernel.bodies import circle_body, Material
 import numpy as np
 
 # Create bodies with different temperatures / 创建不同温度的刚体
@@ -448,7 +449,7 @@ Smoothed Particle Hydrodynamics with Poly6/Spiky/Viscosity kernels and Tait equa
 使用Poly6/Spiky/粘性核函数和Tait状态方程的光滑粒子流体动力学。
 
 ```python
-from pymo.rules.fluid import SPHSystem, SPHParams, create_water_column
+from pwarm.rules.fluid import SPHSystem, SPHParams, create_water_column
 
 # Create fluid system / 创建流体系统
 params = SPHParams(
@@ -490,7 +491,7 @@ Rankine criterion: fracture when maximum principal stress exceeds fracture tough
 Rankine准则：当最大主应力超过断裂韧性时发生断裂。
 
 ```python
-from pymo.rules.fracture import (
+from pwarm.rules.fracture import (
     check_fracture, split_body, process_fracture,
     principal_stresses, FractureParams
 )
@@ -519,11 +520,11 @@ Records time-series data from world simulation (simulates real sensors).
 从世界模拟中录制时间序列数据（模拟真实传感器）。
 
 ```python
-from pymo.ai.observer import WorldObserver, TimeSeriesDataset
+from pwarm.ai.observer import WorldObserver, TimeSeriesDataset
 
 # Create world / 创建世界
-from pymo.kernel.bodies import circle_body
-from pymo.kernel.world import World
+from pwarm.kernel.bodies import circle_body
+from pwarm.kernel.world import World
 import numpy as np
 
 w = World(gravity=np.array([0.0, -9.81]), dt=0.01)
@@ -546,7 +547,7 @@ Symbolic regression discovers analytic expressions from data.
 符号回归从数据中发现解析表达式。
 
 ```python
-from pymo.ai.law_discovery import LawDiscovery, GplearnRefineBackend
+from pwarm.ai.law_discovery import LawDiscovery, GplearnRefineBackend
 
 # Discover y = f(t) / 发现 y = f(t)
 discovery = LawDiscovery(backend=GplearnRefineBackend())
@@ -566,7 +567,7 @@ The full observe → discover → predict → compare loop.
 完整的观察→发现→预测→比较循环。
 
 ```python
-from pymo.ai.closed_loop import ClosedLoopAI
+from pwarm.ai.closed_loop import ClosedLoopAI
 
 ai = ClosedLoopAI(train_fraction=0.6)
 results = ai.run(dataset, quantities=["body0.pos.y"])
@@ -586,7 +587,7 @@ print(ai.summary())
 ### 2D Viewer / 2D查看器
 
 ```python
-from pymo.viz.viewer import PhysicsViewer, ViewerConfig
+from pwarm.viz.viewer import PhysicsViewer, ViewerConfig
 
 # Interactive mode / 交互模式
 viewer = PhysicsViewer(world, config=ViewerConfig(
@@ -613,7 +614,7 @@ paths = viewer.record(n_frames=300, out_dir="output/", steps_per_frame=1)
 ### 3D Viewer / 3D查看器
 
 ```python
-from pymo.viz.viewer3d import PhysicsViewer3D, ViewerConfig3D
+from pwarm.viz.viewer3d import PhysicsViewer3D, ViewerConfig3D
 
 viewer = PhysicsViewer3D(world3d, config=ViewerConfig3D(
     window_size=(1200, 800),
@@ -634,7 +635,7 @@ Ray-based distributed simulation with fault tolerance and checkpointing.
 基于Ray的分布式模拟，支持容错和检查点。
 
 ```python
-from pymo.parallel.ray_parallel import (
+from pwarm.parallel.ray_parallel import (
     SimulationConfig, SimulationBatch, ExperimentRunner
 )
 
@@ -739,6 +740,73 @@ for r in results:
 | `LawDiscovery` | Discover symbolic laws from data / 从数据中发现符号定律 |
 | `ClosedLoopAI` | Observe → discover → predict → compare / 观察→发现→预测→比较 |
 | `GplearnRefineBackend` | gplearn + coefficient refinement backend / gplearn+系数优化后端 |
+
+---
+
+## 11. Genesis: Model Competition / Genesis：模型竞争
+
+> ⚠️ The physics chapters above (2D/3D bodies, collision) document the
+> legacy `pwarm.kernel` API, removed in v0.1 — see
+> [docs/architecture/deprecated-kernel.md](docs/architecture/deprecated-kernel.md).
+> The live physics entry point is `pwarm.physics.WorldEngine`; the live AI
+> layer is `pwarm.scientist`. This chapter shows the CURRENT
+> hypothesis-testing loop (Genesis Steps 1–10).
+
+> ⚠️ 上文物理章节记载的是 v0.1 已移除的 `pwarm.kernel` 旧 API；现行物理入口是
+> `pwarm.physics.WorldEngine`，现行 AI 层是 `pwarm.scientist`。本章演示当前的
+> 假设检验闭环（Genesis Steps 1–10）。
+
+```python
+from pwarm.scientist import (ScientistAgent, KnowledgeBase, Laboratory,
+                            ScientificModel, model_prediction, disagreement,
+                            ConditionBinding, OutputBinding, ObservationReduction)
+from pwarm.universes import load_universe
+
+universe = load_universe("universe_001")       # g = 9.81, hidden
+knowledge = KnowledgeBase("knowledge/universe_001.json", universe="universe_001")
+agent = ScientistAgent(Laboratory(universe), knowledge)
+
+# 1. Rival hypotheses / 竞争假设：y = k·x  vs  y = k·x²
+h1 = ScientificModel(model_id="linear", params={"k": 1.0})
+h2 = ScientificModel(model_id="quadratic", params={"k": 1.0})
+disagreement(model_prediction(h1, {"x": 5.0}), model_prediction(h2, {"x": 5.0}))
+# → 20.0
+
+# 2. Propose the most discriminating condition / 提出区分度最高的条件
+proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 2.0}, {"x": 5.0}])
+# → x = 5 (disagreement 20 beats 2)
+
+# 3. Commit BOTH predictions BEFORE the experiment (sha256, append-only)
+commitments = agent.commit_discriminating_predictions(
+    (h1, h2), proposal, kind="drop",
+    binding=ConditionBinding({"x": "drop_height"}))    # x → drop_height
+
+# 4. Run the experiment ONCE
+observation = agent.execute_proposal(
+    proposal, kind="drop", binding=ConditionBinding({"x": "drop_height"}))
+
+# 5. Adjudicate each commitment independently → CONFIRMED / REFUTED
+verdicts = agent.verify_competing_predictions(
+    commitments, observation, OutputBinding({"y": "z"}), "y",
+    ObservationReduction(channel="z", rule="first"))
+# → pred-0001 (linear, 5.0) confirmed; pred-0002 (quadratic, 25.0) refuted
+
+# 6. Query each model's evidence ledger (facts, not scores)
+state = knowledge.competition_state("model linear")
+state.experiment_ids, state.confirmed_count, state.refuted_count, state.conflicts
+```
+
+Rules of the loop / 闭环规则：
+
+- Predictions are **committed before** the experiment; editing a committed
+  prediction is detected by its hash — a changed mind commits a NEW one.
+  预测在实验前承诺；篡改承诺会被 hash 发现——改主意只能提交新预测。
+- The experiment runs **once**; every commitment is verified against that
+  single observation, independently. 实验只执行一次；每个承诺独立对照同一次观测裁决。
+- Bindings are **declared data**: an unmapped variable or an
+  out-of-vocabulary field fails loudly. 绑定是声明数据：未声明的变量/字段大声失败。
+- Verdicts are **facts, not scores**: no winner, weight, probability or
+  elimination exists at this layer. 裁决是事实而非评分：本层没有赢家、权重、概率与淘汰。
 
 ---
 

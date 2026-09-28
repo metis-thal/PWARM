@@ -1,6 +1,6 @@
 # The deprecated kernel — a post-mortem / 遗留内核的存档
 
-`src/pymo/kernel/` (legacy 2D/3D physics) was removed in commit `75a9e04`
+`src/pwarm/kernel/` (legacy 2D/3D physics) was removed in commit `75a9e04`
 (v0.1). This document is the record that deletion advice asks for — kept
 because "we deleted it" should always come with "here is why that was safe".
 
@@ -13,7 +13,7 @@ The kernel was PWARM's first physics implementation: 2D circle/edge worlds
 
 ## Why it was replaced
 
-The Genesis-inspired unified engine (`pymo.physics`) superseded it on every
+The Genesis-inspired unified engine (`pwarm.physics`) superseded it on every
 axis that matters:
 
 | | kernel | physics |
@@ -26,8 +26,8 @@ axis that matters:
 
 ## What replaced it
 
-- `pymo.physics` — the unified engine (see README architecture tree)
-- `pymo.scientist.experiment.Laboratory` — the AI↔physics door
+- `pwarm.physics` — the unified engine (see README architecture tree)
+- `pwarm.scientist.experiment.Laboratory` — the AI↔physics door
 - `tests/physics/` — engine verification (conservation, collision, architecture)
 
 ## Should you use it?
@@ -37,4 +37,4 @@ No. It is gone from v0.1; the last full copy lives at tag/commit
 are migrating old experiments: kernel `World.step` maps to
 `WorldEngine.tick`, kernel bodies map to `create_rigid_body`, and the
 scientist layer has never depended on the kernel — Mission 001–003 all run
-on `pymo.physics` only.
+on `pwarm.physics` only.

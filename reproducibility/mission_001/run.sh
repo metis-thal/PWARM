@@ -3,4 +3,4 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PYTHONPATH=src
-python -m pymo.cli mission run 001 --json reproducibility/mission_001/results
+python -m pwarm.cli mission run 001 --json reproducibility/mission_001/results

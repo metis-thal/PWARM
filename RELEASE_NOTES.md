@@ -8,6 +8,38 @@
 > an AI that discovers laws, designs its own experiments, and does science
 > under a budget — including requesting new instruments when stuck.
 
+## Unreleased — Genesis: the prediction–commitment–verification loop
+
+Steps 1–10 of the Genesis arc turn the scientist from a *parameter
+identifier* into a *hypothesis-testing agent* (all AI-side, all
+measurement-only; no schema breaks, Missions 001–003 pinned by regression):
+
+- **Commitment before observation** (Steps 1/6) — predictions are
+  hash-anchored (sha256) and persisted BEFORE the experiment runs;
+  tampering is detected; competing models commit independently against
+  the same spec.
+- **Belief-driven predictions** (Step 2) — predictions are translated from
+  the scientist's own uncertainty intervals (no hard-coded priors); a
+  confirmed verdict tightens the belief, a refuted one widens it —
+  deterministic, no Bayesian machinery.
+- **Discriminating proposals** (Steps 2–4.5) — rank candidate conditions by
+  model disagreement; explicit contracts bind model vocabulary to
+  experiment parameters (ConditionBinding) and model outputs to
+  observation channels (OutputBinding); execution goes through the
+  standard Laboratory channel, once.
+- **Per-model verdicts** (Steps 5–7) — observation reduction to a scalar
+  (declared rule), and one CONFIRMED/REFUTED verdict per committed
+  prediction from a single observation; verdicts never re-run physics.
+- **Evidence ledger** (Steps 8–10) — per-model evidence summaries and
+  competition states with full provenance; the statistical unit is
+  (model, experiment); disagreements are reported as conflicts, never
+  tie-broken. Facts, not scores.
+- **Mission 004 Day 1 restored** — unknown-liquid measurement
+  infrastructure (universe_004, immersion apparatus, reproducibility
+  envelope).
+- **Tests**: 277 total (scientist 184), Ruff clean, reproducibility
+  envelopes byte-stable.
+
 ## Highlights / 亮点
 
 ### AI Scientist（三层任务课程 / three-mission curriculum）
@@ -43,10 +75,12 @@ Mission 003 的仪器弧是本版本的核心叙事：AI 用落体/滑动装置�
 
 ## 破坏性变更 / Breaking changes
 
-- 旧版 `pymo.kernel`（2D/3D 遗留内核）已删除；请迁移到 `pymo.physics`
-  Legacy `pymo.kernel` removed — migrate to `pymo.physics`
-- 项目发行名由 `pymo` 改为 `PWARM`（导入包名仍为 `pymo`）
-  Distribution renamed `pymo` → `PWARM` (import package is still `pymo`)
+- 旧版 `pwarm.kernel`（2D/3D 遗留内核）已删除；请迁移到 `pwarm.physics`
+  Legacy `pwarm.kernel` removed — migrate to `pwarm.physics`
+- 项目发行名由 `pymo` 改为 `PWARM`（v0.1.0-alpha 时导入包名仍为 `pymo`，
+  现已一并更名为 `pwarm`——见上方 Unreleased 段）
+  Distribution renamed `pymo` → `PWARM` (at v0.1.0-alpha the import package
+  was still `pymo`; it has since been renamed to `pwarm` — see Unreleased)
 - 实验设计器准则从"信息增益最大化"升级为"价值 = 增益/成本"：
   Mission 002 的首选落体高度由 50 m 变为 10 m（同样达到知识阈值，成本 1/4）
   Designer doctrine upgraded from max-information to value = gain/cost

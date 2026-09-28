@@ -16,7 +16,7 @@ import os
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from pymo.ai.experiment import (
+from pwarm.ai.experiment import (
     AutonomousExperimenter,
     ExperimentRunner,
     Hypothesis,
@@ -24,10 +24,10 @@ from pymo.ai.experiment import (
     create_free_fall_experiment,
     create_collision_experiment,
 )
-from pymo.ai.observer import WorldObserver
-from pymo.kernel.bodies import circle_body
-from pymo.kernel.world import World
-from pymo.ai.closed_loop import ClosedLoopAI
+from pwarm.ai.observer import WorldObserver
+from pwarm.kernel.bodies import circle_body
+from pwarm.kernel.world import World
+from pwarm.ai.closed_loop import ClosedLoopAI
 
 
 def main():

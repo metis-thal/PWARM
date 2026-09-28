@@ -5,10 +5,10 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
-from pymo.kernel.bodies3d import sphere_body, box_body, Material
-from pymo.kernel.world_engine import WorldEngine
-from pymo.viz.snapshot import CameraState, build_snapshot_from_world
-from pymo.viz.gl_renderer import GLRenderer, RendererConfig, FrustumPlanes, DoubleBuffer
+from pwarm.kernel.bodies3d import sphere_body, box_body, Material
+from pwarm.kernel.world_engine import WorldEngine
+from pwarm.viz.snapshot import CameraState, build_snapshot_from_world
+from pwarm.viz.gl_renderer import GLRenderer, RendererConfig, FrustumPlanes, DoubleBuffer
 
 def main():
     engine = WorldEngine()

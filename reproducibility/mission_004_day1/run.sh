@@ -13,8 +13,8 @@ mkdir -p reproducibility/mission_004_day1/results
 python - <<'EOF' | tee reproducibility/mission_004_day1/results/run_output.txt
 import json
 
-from pymo.scientist import ExperimentSpec, Laboratory
-from pymo.universes import load_universe
+from pwarm.scientist import ExperimentSpec, Laboratory
+from pwarm.universes import load_universe
 
 lab = Laboratory(load_universe("universe_004"))
 depths = (1.0, 2.0, 4.0)   # immersion_test.DESIGN_DEPTHS

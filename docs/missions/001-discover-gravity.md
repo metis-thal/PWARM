@@ -24,14 +24,14 @@ an unknown world from free-fall observations.
 
 The AI-facing *manifest* lists the NAME `gravity` — knowing what you don't
 know is the legitimate starting point of the method. The VALUE is loaded only
-physics-side (`pymo.universes` → `Laboratory`) and is structurally invisible
+physics-side (`pwarm.universes` → `Laboratory`) and is structurally invisible
 to `ScientistAgent` (see `docs/architecture/ai-physics-contract.md`).
 
 ## 3. Available Instruments
 
 One instrument: a **drop rig** — release a 1.0 kg sphere from a chosen height,
 record `(t, z)` until contact. The planner v1 designs drops at heights
-**10 m, 20 m, 5 m** (`src/pymo/scientist/planner.py`).
+**10 m, 20 m, 5 m** (`src/pwarm/scientist/planner.py`).
 
 ## 4. Experimental Constraints
 

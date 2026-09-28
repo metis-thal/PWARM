@@ -2,6 +2,41 @@
 
 This document outlines the remaining work from the original 5-phase roadmap that was explicitly deferred.
 
+## Genesis Arc — Open Items (recorded after Step 10, 2026-09)
+
+Real gaps found while building Steps 1–10 (prediction → commitment →
+verification → competition state), in priority order:
+
+1. **Adjudication persistence asymmetry** — belief-path predictions are
+   committed and their verdicts persisted; competition-path commitments
+   exist (Step 6) and their verdicts persist (Step 7), but the
+   OutputBinding/ObservationReduction used is NOT part of the commitment —
+   a committed prediction can be adjudicated through different channels.
+2. **Tolerance epistemology** — model tolerances default to 1.0; where a
+   model's uncertainty SHOULD come from (self-declared resolution?
+   historical calibration?) is undecided. The g·dt² recording offset must
+   be absorbed by tolerance, never corrected away.
+3. **Refuted-is-final vs re-run discipline** — `record_verification`
+   treats refuted as terminal; re-verification appends records but cannot
+   overturn a verdict. A reconciliation semantic (e.g. fluke re-runs) is
+   needed before verdicts drive model survival.
+4. **Model survival semantics** — no winner/weight/elimination exists by
+   design; `CompetitionState` provides facts only. Comparing two states
+   (including cross-model discriminating pairs like "A confirmed E1 while
+   B refuted E1") is the next decision.
+5. **Binding declaration source** — ConditionBinding/OutputBinding are
+   declared data, but WHO declares them (human lab vocabulary? learned?)
+   is open. `material` (string conditions) is out of vocabulary.
+6. **experiment.py immersion residue** — the immersion code path is live
+   again post-restore; the Day-2 claim-routing landmine (the designer's
+   suffix map would route `ambient_fluid.density` to buoyancy_test) remains.
+7. **prediction.py cohesion** — five responsibilities in one module
+   (models / commitments / verdicts / bindings / reduction) plus a
+   state↔knowledge↔prediction import cycle (TYPE_CHECKING workaround);
+   split before Phase 3.
+8. **Temporal dimension** — CompetitionState has no timestamp ordering;
+   whether stale evidence applies to a revised model is unmodelled.
+
 ## Phase 3: Multi-Discipline Coupling + Complex Emergent Scenarios (3-4 weeks)
 
 ### 3.1 Chemistry & Phase Change Module
@@ -91,7 +126,7 @@ This document outlines the remaining work from the original 5-phase roadmap that
 
 ### Quick Start
 ```bash
-cd D:\project\code\pymo
+cd D:\project\code\pwarm
 .\.venv\Scripts\activate
 python -m pytest -q  # 52 tests should pass
 ```

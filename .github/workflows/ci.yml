@@ -33,10 +33,10 @@ jobs:
       # Green here means more than "tests pass": the stranger test itself
       # still runs — the AI discovers gravity in a plain terminal.
       - name: Stranger test (pwarm demo 001)
-        run: python -m pymo.cli demo 001
+        run: python -m pwarm.cli demo 001
 
       - name: Mission 003 instrument arc smoke
-        run: python -m pymo.cli demo 003
+        run: python -m pwarm.cli demo 003
 
       # Reproducibility: a fresh scientist, deterministic physics, error
       # below threshold — the scientific claims themselves are CI-checked.

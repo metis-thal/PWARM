@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pytest
 
-from pymo.scientist import (
+from pwarm.scientist import (
     REGISTRY,
     ExperimentDesigner,
     ExperimentSpec,
@@ -26,7 +26,7 @@ from pymo.scientist import (
     ScientistAgent,
     ScientistState,
 )
-from pymo.universes import load_universe
+from pwarm.universes import load_universe
 
 MISSION = Mission(id="002", title="Material Discovery",
                   objective="Characterize the materials of Material World",

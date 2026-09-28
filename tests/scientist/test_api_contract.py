@@ -1,7 +1,7 @@
 """The AI ↔ Physics contract, enforced (docs/architecture/ai-physics-contract.md).
 
 Core rule: the AI may observe the world, but it can never read the answers.
-Structurally: no AI-side module imports pymo.universes; the observation
+Structurally: no AI-side module imports pwarm.universes; the observation
 channel carries measurements only; the Laboratory facade never hands out the
 Universe.
 """
@@ -11,9 +11,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from pymo.scientist import ObservationRecord
+from pwarm.scientist import ObservationRecord
 
-_SRC = Path(__file__).resolve().parents[2] / "src" / "pymo" / "scientist"
+_SRC = Path(__file__).resolve().parents[2] / "src" / "pwarm" / "scientist"
 
 # Modules that ARE the AI (planning/cognition). experiment.py is the door —
 # it must consume secrets to configure worlds but never re-export them.
@@ -30,9 +30,9 @@ def test_ai_modules_never_import_universes() -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert not alias.name.startswith("pymo.universes"), (name, alias.name)
+                    assert not alias.name.startswith("pwarm.universes"), (name, alias.name)
             elif isinstance(node, ast.ImportFrom) and node.module:
-                assert not node.module.startswith("pymo.universes"), (name, node.module)
+                assert not node.module.startswith("pwarm.universes"), (name, node.module)
 
 
 def test_observation_record_is_measurement_only() -> None:
@@ -47,7 +47,7 @@ def test_observation_record_is_measurement_only() -> None:
 def test_laboratory_hides_the_universe() -> None:
     import inspect
 
-    from pymo.scientist.experiment import Laboratory, Universe
+    from pwarm.scientist.experiment import Laboratory, Universe
     public = [n for n, _ in inspect.getmembers(Laboratory, lambda m: not inspect.isfunction(m))
               if not n.startswith("_")]
     # A universe NAME may be public (dashboards show it); the Universe
@@ -59,9 +59,9 @@ def test_laboratory_hides_the_universe() -> None:
         for n in dir(Laboratory)
     )
     # and the type is not even importable from the AI-side namespace
-    import pymo.scientist as s
+    import pwarm.scientist as s
     assert "Universe" not in s.__all__
-    assert Universe.__module__ == "pymo.universes"
+    assert Universe.__module__ == "pwarm.universes"
 
 
 def test_experiments_do_not_read_secret_values_directly() -> None:

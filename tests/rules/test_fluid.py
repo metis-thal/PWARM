@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pymo.rules.fluid import (
+from pwarm.rules.fluid import (
     SPHParams,
     create_water_column,
     poly6_kernel,

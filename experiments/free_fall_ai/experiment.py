@@ -31,9 +31,9 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from pymo.ai import LawDiscovery
-from pymo.ai.law_discovery import PolynomialBackend
-from pymo.physics import WorldEngine, WorldEngineConfig
+from pwarm.ai import LawDiscovery
+from pwarm.ai.law_discovery import PolynomialBackend
+from pwarm.physics import WorldEngine, WorldEngineConfig
 
 
 @dataclass

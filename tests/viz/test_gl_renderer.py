@@ -13,7 +13,7 @@ pytest.importorskip("moderngl", reason="viz extra not installed")
 
 import numpy as np
 
-from pymo.viz.gl_renderer import (
+from pwarm.viz.gl_renderer import (
     FrustumPlanes,
     GLRenderer,
     RendererConfig,
@@ -21,7 +21,7 @@ from pymo.viz.gl_renderer import (
     _make_cylinder_mesh,
     _make_sphere_mesh,
 )
-from pymo.viz.snapshot import CameraState, DoubleBuffer
+from pwarm.viz.snapshot import CameraState, DoubleBuffer
 
 # ---------------------------------------------------------------------------
 # Mesh generation tests (pure CPU, no GPU)

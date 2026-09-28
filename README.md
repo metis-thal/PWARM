@@ -65,7 +65,7 @@ pip install -e ".[dev]"     # 开发 / development
 pwarm demo                  # Mission 001 — discover gravity
 pwarm demo 002              # Mission 002 — autonomous experiments + honest unknowns
 pwarm demo 003              # Mission 003 — budget + instrument request arc
-make test                   # 56 tests
+make test                   # 277 tests
 make repro                  # regenerate every reproducibility envelope
 
 # GL 仪表盘（需要窗口）/ GL dashboards (need a window):
@@ -75,19 +75,34 @@ python scripts/demo_mission_003.py
 ```
 
 ```python
-from pymo.scientist import ScientistAgent, ScientistState, Mission
-from pymo.scientist import ScientificModel, model_prediction, disagreement
-from pymo.universes import load_universe
+from pwarm.scientist import ScientistAgent, ScientistState, Mission
+from pwarm.scientist import (ScientificModel, model_prediction, disagreement,
+                            ConditionBinding, OutputBinding, ObservationReduction)
+from pwarm.universes import load_universe
 
 universe = load_universe("universe_001")
 # AI 自主发现隐藏在其中的东西。
 
 # 候选模型：两个假设同时预测
-h1 = ScientificModel(model_id="linear", params={"k": 0.5})
-h2 = ScientificModel(model_id="quadratic", params={"k": 0.1})
-pred_a = model_prediction(h1, {"x": 5.0})
-pred_b = model_prediction(h2, {"x": 5.0})
-D = disagreement(pred_a, pred_b)  # 只产出 prediction 和 disagreement
+h1 = ScientificModel(model_id="linear", params={"k": 1.0})
+h2 = ScientificModel(model_id="quadratic", params={"k": 1.0})
+pred_a = model_prediction(h1, {"x": 5.0})      # 5.0
+pred_b = model_prediction(h2, {"x": 5.0})      # 25.0
+D = disagreement(pred_a, pred_b)               # 只产出 prediction 和 disagreement
+
+# Genesis 闭环：承诺先于观测，一次实验，逐模型独立裁决
+knowledge = KnowledgeBase("knowledge/universe_001.json", universe="universe_001")
+agent = ScientistAgent(Laboratory(universe), knowledge)
+proposal = agent.propose_discriminating_experiment(
+    (h1, h2), [{"x": 2.0}, {"x": 5.0}])              # x=5 区分度最大
+commitments = agent.commit_discriminating_predictions(  # 预测 BEFORE 实验，hash 锚定
+    (h1, h2), proposal, kind="drop",
+    binding=ConditionBinding({"x": "drop_height"}))
+observation = agent.execute_proposal(                    # 实验只执行一次
+    proposal, kind="drop", binding=ConditionBinding({"x": "drop_height"}))
+verdicts = agent.verify_competing_predictions(           # 每个模型独立 CONFIRMED/REFUTED
+    commitments, observation, OutputBinding({"y": "z"}), "y",
+    ObservationReduction(channel="z", rule="first"))
 ```
 
 ---
@@ -157,29 +172,57 @@ Budget → Value Ranking → Experiment → Gap Analysis → Instrument Request 
 - **Mission 005+**: 化学、材料、光学、地质学
 - **Mission 005+**: Chemistry, Materials, Optics, Geology
 
-### Model Competition — 候选模型竞争
+### Genesis — 预测-承诺-验证的科学闭环 / The Prediction–Commitment–Verification Loop
 
-PWARM 的 AI 科学家可以同时表示多个候选模型（`ScientificModel`），在相同实验条件下各自计算 prediction，并计算两者之间的 disagreement。
+Genesis 层让 AI 科学家拥有完整的假设检验循环：多个候选模型在实验执行前各自
+**承诺**（sha256 锚定、追加式、不可篡改）自己的预测；实验只执行一次；观测经
+显式绑定与约简后，对每个承诺**独立裁决**为 CONFIRMED / REFUTED；证据按模型
+累积为可追溯的事实账本。全程不读取任何隐藏真值。
+
+The Genesis layer gives the AI scientist a full hypothesis-testing loop:
+competing models each **commit** (sha256-anchored, append-only, tamper-evident)
+their predictions BEFORE the experiment runs; the experiment runs ONCE; the
+observation is bound and reduced through explicit contracts, then every
+commitment is **independently adjudicated** to CONFIRMED / REFUTED; evidence
+accumulates into a traceable per-model ledger. No hidden truth is ever read.
 
 ```
-Model A → prediction A
-Model B → prediction B
-disagreement → D
+模型 A/B → 预测 → 区分度排序 → 提案 → 承诺(hash) → 实验一次
+        → 观测 → 输出绑定 → 观测约简 → 逐模型裁决 → 证据账本
+models A/B → predictions → rank discriminating conditions → proposal
+        → commit(hash) → experiment ONCE → observation → output binding
+        → reduction → per-model verdict → evidence ledger
 ```
 
-当前阶段只产出 prediction 和 disagreement，**不判断哪个模型正确**。模型竞争的后续步骤（discriminating experiment → observation → verification → model survives/refuted）留给未来阶段。
+核心数据结构 / Core data structures:
 
-核心组件：
-- `ScientificModel` — 候选模型（model_id + params）
-- `model_prediction(model, conditions)` — 纯函数计算 prediction
-- `disagreement(pred_a, pred_b)` — 确定性 disagreement（绝对差值）
+| 结构 / Structure | 职责 / Role |
+|------------------|-------------|
+| `ScientificModel` | 候选模型：model_id + 参数 / candidate model (id + params) |
+| `Prediction` → `PredictionRecord` | 预测值 → 承诺记录：sha256 锚定、追加式、状态 open → confirmed/refuted / prediction → committed record: hash-anchored, append-only |
+| `ConditionBinding` | 显式合同：模型条件变量 → ExperimentSpec 参数（未声明即失败）/ model condition variable → spec parameter |
+| `OutputBinding` | 显式合同：模型输出变量 → 观测通道（t/z/vx）/ model output → observation field |
+| `ComparisonInput` + `ObservationReduction` | 观测通道采样 → 裁决用标量（显式规则，第一版 `first`）/ channel samples → verdict-input scalar |
+| `VerificationRecord` | 一次裁决的持久化事实：residual + status + experiment_id / one persisted verdict fact |
+| `EvidenceSummary` → `CompetitionState` | 按模型聚合的实验账本；统计单位 = (model, experiment)，冲突显式报告 / per-model evidence; unit = model × experiment, conflicts reported |
+
+事实而非评分：本层产出 residual 与预测级 CONFIRMED/REFUTED，但**不产出**
+winner / weight / probability / model elimination——模型存活语义是下一阶段的
+决策。全部合同（Condition/Output binding、Reduction）都是声明的数据，缺绑定
+或越界目标一律大声失败，绝不静默猜测。
+
+Facts, not scores: this layer yields residuals and per-prediction
+CONFIRMED/REFUTED verdicts, but **no** winner / weight / probability / model
+elimination — model-survival semantics are the next decision. Every contract
+(condition/output binding, reduction) is declared data: a missing binding or
+an out-of-vocabulary target fails loudly instead of being guessed.
 
 ---
 
 ## 架构 / Architecture
 
 ```
-src/pymo/
+src/pwarm/
 ├── geology/    # 地质系统：地层学、热传导、侵蚀、构造运动
 │               # Stratigraphy, thermal conduction, erosion, tectonics
 ├── rules/      # 多学科规则：力学、热力学、流体、材料、化学
@@ -201,12 +244,15 @@ src/pymo/
 ├── scientist/  # AI 科学家层
 │               # The AI scientist layer
 │   ├── state.py # 自我模型：不确定度区间 + 状态 / Self-model: uncertainty intervals + statuses
-│   ├── prediction.py # 预测、承诺、验证、候选模型 / Prediction, commitment, verification, ScientificModel
+│   ├── knowledge.py # 文明知识库：定律 + 承诺/验证账本 + 证据聚合 / Civilization knowledge: laws + commitment/verification ledger + evidence aggregation
+│   ├── prediction.py # Genesis 核心：承诺、裁决、双向绑定、观测约简、竞争状态 / Genesis core: commitments, verdicts, both bindings, observation reduction, competition state
+│   ├── agent.py # 科学方法循环：预测 → 承诺 → 执行 → 验证 → 学习 / The scientific-method loop: predict → commit → execute → verify → learn
 │   ├── information.py # 测量分辨率模型 / Measurement resolution models
 │   ├── designer.py # 按价值 = 增益 / 成本选择实验 / Choose experiments by value = gain / cost
 │   ├── budget.py + experiment_value.py # 预算账本 + 价值排序 / Budget ledger + value ranking
 │   ├── instrument.py # 缺口分析 → 申请 → 目录授权 / Gap analysis → request → catalog grant
-│   └── experiments/ # 落体测试、滑动测试、浮力测试 / drop_test, slide_test, buoyancy_test
+│   ├── hypothesis.py # 拟合 → 假设 → 交叉验证 / Fit → hypothesis → cross-verification
+│   └── experiments/ # 落体测试、滑动测试、浮力测试、浸没测试 / drop_test, slide_test, buoyancy_test, immersion_test
 └── viz/        # OpenGL GPU 实例化、PBR、光线追踪
                 # OpenGL GPU instancing, PBR, ray-tracing
 ```
@@ -219,6 +265,11 @@ src/pymo/
    **Ground truth / AI separation** — physics engine is absolute truth; AI is a learned approximation.
 3. **每阶段可视化验收** — 禁止无头开发；每阶段必须可演示。
    **Visual acceptance every phase** — no headless development; every phase demoable.
+4. **承诺先于观测** — 预测在实验前被 hash 锚定并持久化；裁决只消费
+   已承诺内容与新观测，历史不可篡改。
+   **Commitment before observation** — predictions are hash-anchored and
+   persisted before the experiment runs; verdicts consume only committed
+   content plus the new observation, and history cannot be rewritten.
 
 ---
 
@@ -232,9 +283,9 @@ make repro                   # 重新生成全部可复现性档案 / regenerate
 
 | 测试套件 / Test Suite | 测试数 / Tests | 状态 / Status |
 |-----------------------|---------------|---------------|
-| Scientist (Mission 001–004 + genesis) | 56 | ✅ 全部通过 |
-| Engine / geology / viz / rules | 45 | ✅ 全部通过 (3 skip) |
-| Reproducibility envelopes | 6 | ✅ 全部通过 |
+| Scientist (Mission 001–004 + Genesis Steps 1–10) | 184 | ✅ 全部通过 |
+| Engine / physics / geology / viz / rules / ai | 89 | ✅ 全部通过 (3 skip) |
+| Reproducibility envelopes | 4 | ✅ 全部通过 |
 
 每个 Mission 附带可复现档案
 [`reproducibility/mission_XXX/`](reproducibility/)（config · seed · run.sh ·
@@ -279,8 +330,10 @@ PWARM 旨在研究人工智能体如何通过实验获取科学知识。关键�
 | 001 | 重力 (自由落体) / Gravity (free-fall) | ✅ 完成 |
 | 002 | 材料属性 (恢复系数、摩擦) / Material properties (restitution, friction) | ✅ 完成 |
 | 003 | 预算约束 + 仪器获取 / Budget constraints + instrument acquisition | ✅ 完成 |
-| 004 | 流体与热力学 / Fluid & Thermodynamics | 计划中 |
+| 004 Day 1 | 未知液体测量基础设施 / Unknown-liquid measurement infrastructure | ✅ 完成 |
+| 004 Day 2+ | 密度推断 + 流体定律 / Density inference + fluid laws | 计划中 |
 | 005+ | 化学、材料、光学、地质学 / Chemistry, Materials, Optics, Geology | 未来 |
+| Genesis | 预测-承诺-验证闭环（Steps 1–10）/ Prediction–commitment–verification loop | ✅ Steps 1–10 完成 |
 
 ---
 
