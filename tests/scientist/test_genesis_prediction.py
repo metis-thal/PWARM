@@ -56,6 +56,9 @@ from pwarm.scientist.prediction import (
     PredictionRecord,
     VerificationRecord,
     adjudicate,
+    commitment_hash,
+    format_spec_refs,
+    parse_spec_refs,
     prediction_from_belief,
     verify_commitment,
 )
@@ -306,12 +309,15 @@ def test_belief_update_is_deterministic(tmp_path):
 
 
 def test_prediction_record_schema_unchanged():
-    """TEST E (schema pin, with the untouched hash tests B/C above): Phase
-    1's PredictionRecord fields and commitment machinery are exactly as
-    before the belief-feedback step."""
+    """TEST E (schema pin, with the untouched hash tests B/C above): the
+    PredictionRecord fields after the P1-4 contract upgrade — the five
+    scientific fields, the declared verification contract (hashed
+    together with them), then the bookkeeping fields."""
     assert [f.name for f in dataclasses.fields(PredictionRecord)] == [
         "prediction_id", "model_ref", "claim", "spec_ref", "predicted",
-        "tolerance", "committed_hash", "seq", "created_at", "status"]
+        "tolerance", "condition_binding", "output_binding", "output",
+        "reduction_channel", "reduction_rule", "committed_hash", "seq",
+        "created_at", "status"]
 
 
 def test_verification_updates_belief_in_mission_loop(lab, tmp_path):
@@ -524,7 +530,7 @@ def test_pre_phase1_knowledge_files_remain_valid(tmp_path):
     knowledge.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3   # v3: commitments carry contracts
     assert data["laws"][0]["name"] == "gravity"
     assert data["predictions"] == [] and data["verifications"] == []
 
@@ -620,7 +626,9 @@ def test_existing_prediction_flow_unchanged():
     from pwarm.scientist.state import ScientistState
     assert [f.name for f in dataclasses.fields(PredictionRecord)] == [
         "prediction_id", "model_ref", "claim", "spec_ref", "predicted",
-        "tolerance", "committed_hash", "seq", "created_at", "status"]
+        "tolerance", "condition_binding", "output_binding", "output",
+        "reduction_channel", "reduction_rule", "committed_hash", "seq",
+        "created_at", "status"]
     # prediction_from_belief still works
     with tempfile.TemporaryDirectory() as tmp:
         knowledge = KnowledgeBase(pathlib.Path(tmp) / "k.json",
@@ -1435,14 +1443,18 @@ def test_full_chain_reaches_the_verdict(lab, tmp_path):
 # -- Genesis Step 6: competition prediction commitment ------------------------
 
 def _committed_rivals(agent, tolerances=None):
-    """rank -> propose -> commit BOTH rivals under the winning condition."""
+    """rank -> propose -> commit BOTH rivals under the winning condition,
+    with an explicit per-model tolerance (P1-5) and the full verification
+    contract declared up front (P1-4)."""
     h1, h2 = _rival_pair()
     proposal = agent.propose_discriminating_experiment(
         (h1, h2), [{"x": 5.0}])
     records = agent.commit_discriminating_predictions(
         (h1, h2), proposal, kind="drop",
+        tolerances=tolerances or {"linear": 0.5, "quadratic": 0.5},
         binding=ConditionBinding({"x": "drop_height"}),
-        tolerances=tolerances)
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
     return records, proposal
 
 
@@ -1500,7 +1512,10 @@ def test_later_prediction_changes_cannot_touch_commitments(lab, tmp_path):
     guess_a = model_prediction(h1, {"x": 5.0})
     records = agent.commit_discriminating_predictions(
         (h1, h2), proposal, kind="drop",
-        binding=ConditionBinding({"x": "drop_height"}))
+        tolerances={"linear": 0.5, "quadratic": 0.5},
+        binding=ConditionBinding({"x": "drop_height"}),
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
 
     replace(guess_a, value=9.9, tolerance=0.5)      # a changed mind, in memory
     assert records[0].predicted == 5.0              # commitment unchanged
@@ -1574,7 +1589,10 @@ def test_commitments_precede_execution(lab, tmp_path):
 
     records = agent.commit_discriminating_predictions(
         (h1, h2), proposal, kind="drop",
-        binding=ConditionBinding({"x": "drop_height"}))
+        tolerances={"linear": 0.5, "quadratic": 0.5},
+        binding=ConditionBinding({"x": "drop_height"}),
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
     events.append(("commit", len(knowledge.predictions)))
     agent.execute_proposal(proposal, kind="drop",
                            binding=ConditionBinding({"x": "drop_height"}))
@@ -1613,7 +1631,10 @@ def test_competition_chain_stops_at_commitment(lab, tmp_path):
         (h1, h2), [{"x": 5.0}])
     records = agent.commit_discriminating_predictions(
         (h1, h2), proposal, kind="drop",
-        binding=ConditionBinding({"x": "drop_height"}))
+        tolerances={"linear": 0.5, "quadratic": 0.5},
+        binding=ConditionBinding({"x": "drop_height"}),
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
 
     assert len(records) == 2
     assert len(knowledge.predictions) == 2
@@ -1624,7 +1645,8 @@ def test_competition_chain_stops_at_commitment(lab, tmp_path):
 # -- Genesis Step 7: one observation, many competing verdicts -----------------
 
 def _competed_and_executed(lab, tmp_path, tolerances=None):
-    """Steps 2–6 + one execution: rivals committed, experiment run ONCE."""
+    """Steps 2–6 + one execution: rivals committed (with their full
+    verification contract), experiment run ONCE."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
     agent = ScientistAgent(lab, knowledge)
     h1, h2 = _rival_pair()
@@ -1632,7 +1654,10 @@ def _competed_and_executed(lab, tmp_path, tolerances=None):
         (h1, h2), [{"x": 5.0}])
     records = agent.commit_discriminating_predictions(
         (h1, h2), proposal, kind="drop",
-        binding=ConditionBinding({"x": "drop_height"}), tolerances=tolerances)
+        tolerances=tolerances or {"linear": 0.5, "quadratic": 0.5},
+        binding=ConditionBinding({"x": "drop_height"}),
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
     observation = agent.execute_proposal(
         proposal, kind="drop", binding=ConditionBinding({"x": "drop_height"}))
     return knowledge, agent, records, observation
@@ -1922,16 +1947,17 @@ def test_c_same_experiment_counts_once_per_model(tmp_path):
 
 def test_d_same_prediction_not_double_counted(tmp_path):
     """TEST D: one prediction verified against two experiments -> it appears
-    once in prediction_ids while both verifications are still counted."""
+    once in prediction_ids while both verifications are still counted. The
+    prediction commits for the E1/E2 battery (identity integrity)."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
-    preds, _ = _commit_and_verify(knowledge, "model D", [
-        ("linear", 5.0, 0.5, "E1", 5.0),    # D1 -> E1 -> confirmed
-    ])
-    # verify the SAME prediction against a second experiment
-    pred = preds[0]
+    pred = knowledge.commit_prediction(
+        model_ref="model D", claim="linear", spec_ref="E1, E2",
+        value=5.0, tolerance=0.5)           # D1 committed for the battery
     outcome = PredictionOutcome(
         claim=pred.claim, predicted=pred.predicted, observed=5.0,
         residual=0.0, status="confirmed")
+    knowledge.record_verification(pred.prediction_id, "E1", outcome)
+    # verify the SAME prediction against a second experiment
     knowledge.record_verification(pred.prediction_id, "E2", outcome)
     summary = knowledge.evidence_for_model("model D")
 
@@ -2161,13 +2187,16 @@ def test_step9_a_duplicate_verification_not_independent(tmp_path):
 def test_step9_b_same_prediction_different_experiments(tmp_path):
     """TEST B: one prediction verified against several DISTINCT experiments IS
     multiple independent evidence — each experiment is an independent
-    observation testing the same claim."""
+    observation testing the same claim. The prediction commits for the whole
+    E1/E2/E3 battery up front (identity integrity: a verification is only
+    legal for experiments the commitment declares)."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
-    preds, _ = _commit_and_verify(knowledge, "model X", [
-        ("linear", 5.0, 0.5, "E1", 5.0),     # P1 -> E1 -> confirmed
-    ])
-    _duplicate_verify(knowledge, "model X", preds[0], "E2", 5.0, "confirmed")
-    _duplicate_verify(knowledge, "model X", preds[0], "E3", 5.0, "confirmed")
+    pred = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1, E2, E3",
+        value=5.0, tolerance=0.5)            # P1 committed for the battery
+    _duplicate_verify(knowledge, "model X", pred, "E1", 5.0, "confirmed")
+    _duplicate_verify(knowledge, "model X", pred, "E2", 5.0, "confirmed")
+    _duplicate_verify(knowledge, "model X", pred, "E3", 5.0, "confirmed")
     summary = knowledge.evidence_for_model("model X")
 
     assert summary.verification_count == 3
@@ -2245,10 +2274,11 @@ def test_step9_f_deterministic(tmp_path):
     """TEST F: identical store -> byte-identical independent evidence."""
     def _run(path):
         knowledge = KnowledgeBase(path, universe="universe_001")
-        preds, _ = _commit_and_verify(knowledge, "model X", [
-            ("linear", 5.0, 0.5, "E1", 5.0),
-        ])
-        _duplicate_verify(knowledge, "model X", preds[0], "E2", 5.0, "confirmed")
+        pred = knowledge.commit_prediction(
+            model_ref="model X", claim="linear", spec_ref="E1, E2",
+            value=5.0, tolerance=0.5)   # committed for the E1/E2 battery
+        _duplicate_verify(knowledge, "model X", pred, "E1", 5.0, "confirmed")
+        _duplicate_verify(knowledge, "model X", pred, "E2", 5.0, "confirmed")
         return knowledge.evidence_for_model("model X")
 
     assert _run(tmp_path / "a.json") == _run(tmp_path / "b.json")
@@ -2340,10 +2370,12 @@ def test_step9_combined_history_counts_everything(tmp_path):
     multi-experiment, multi-prediction same-experiment, and clean pairs all
     coexist, and each independent count reflects only the non-redundant set."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
-    # P1 -> E1 (confirmed) verified TWICE (one duplicate)
-    p1, _ = _commit_and_verify(knowledge, "model X", [
-        ("linear", 5.0, 0.5, "E1", 5.0),
-    ])
+    # P1 -> E1 (confirmed) verified TWICE (one duplicate); P1 commits for the
+    # E1/E2 battery it will be verified against (identity integrity)
+    p1 = [knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1, E2",
+        value=5.0, tolerance=0.5)]
+    _duplicate_verify(knowledge, "model X", p1[0], "E1", 5.0, "confirmed")
     _duplicate_verify(knowledge, "model X", p1[0], "E1", 5.0, "confirmed")
     # P1 -> E2 (confirmed): same prediction, new experiment
     _duplicate_verify(knowledge, "model X", p1[0], "E2", 5.0, "confirmed")
@@ -2576,3 +2608,549 @@ def test_provenance_traces_model_to_verification(tmp_path):
         verification = knowledge.verifications[verification_id]
         assert verification.prediction_id == prediction_id
         assert verification.experiment_id == experiment_id
+
+
+# -- Genesis P0-1: verification identity integrity ----------------------------
+#
+# A committed prediction declares, in spec_ref, the experiment ids it may be
+# verified against (the planned battery, ", "-joined). record_verification is
+# the single persistence gate for VerificationRecords, so it enforces the
+# identity contract for BOTH verification paths: an experiment outside the
+# committed battery is refused loudly, and NOTHING is written — no
+# VerificationRecord, no status flip, no save, no downstream pollution.
+
+def _identity_knowledge(tmp_path) -> KnowledgeBase:
+    return KnowledgeBase(tmp_path / "identity.json", universe="universe_001")
+
+
+def test_identity_matching_experiment_verifies(tmp_path):
+    """Test 1: a prediction committed for E1 verifies against E1."""
+    knowledge = _identity_knowledge(tmp_path)
+    committed = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    outcome = PredictionOutcome(claim="linear", predicted=5.0, observed=5.0,
+                                residual=0.0, status="confirmed")
+
+    record = knowledge.record_verification(
+        committed.prediction_id, "E1", outcome)
+
+    assert record.experiment_id == "E1"
+    assert record.prediction_id == committed.prediction_id
+    assert len(knowledge.verifications) == 1
+    assert knowledge.prediction(committed.prediction_id).status == "confirmed"
+
+
+def test_identity_mismatched_experiment_refused_no_half_write(tmp_path):
+    """Test 2: a prediction committed for E1 can NOT be verified against E2 —
+    refused loudly, and the store is exactly as before the attempt: no new
+    VerificationRecord, no status flip, unchanged file on disk, and no
+    pollution of EvidenceSummary or CompetitionState."""
+    knowledge = _identity_knowledge(tmp_path)
+    committed = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    outcome = PredictionOutcome(claim="linear", predicted=5.0, observed=6.0,
+                                residual=1.0, status="refuted")
+    predictions_before = dict(knowledge.predictions)
+    snapshot = knowledge.path.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not covered by prediction"):
+        knowledge.record_verification(
+            committed.prediction_id, "E2", outcome)
+
+    assert knowledge.verifications == {}                 # nothing appended
+    assert knowledge.predictions == predictions_before   # no status flip
+    assert knowledge.path.read_text(encoding="utf-8") == snapshot  # no save
+    summary = knowledge.evidence_for_model("model X")    # no downstream pollution
+    assert summary.verification_count == 0
+    assert summary.independent_evidence_count == 0
+    state = knowledge.competition_state("model X")
+    assert state.experiment_ids == ()
+    assert state.independent_experiment_count == 0
+    assert state.confirmed_count == 0 and state.refuted_count == 0
+
+
+def test_identity_holds_on_belief_verification_path(lab, tmp_path):
+    """Test 3a: the belief path obeys the identity constraint. A committed
+    battery verifies against its own experiments; a record from an experiment
+    OUTSIDE the battery is refused and records nothing."""
+    knowledge = _identity_knowledge(tmp_path)
+    agent = ScientistAgent(lab, knowledge)
+    specs = [ExperimentSpec(kind="drop", drop_height=5.0)]
+    guesses = [Prediction(claim="gravity", value=9.8, tolerance=0.5,
+                          source="state belief (unknown)")]
+    committed = agent.commit_predictions(guesses, specs)
+    assert committed[0].spec_ref == "drop_h5_m1"
+
+    matching = lab.run_experiment(ExperimentSpec(kind="drop", drop_height=5.0))
+    verifications = agent.verify_predictions(committed, [matching])
+    assert len(verifications) == 1                       # the battery verifies
+
+    foreign = lab.run_experiment(
+        ExperimentSpec(kind="drop", drop_height=50.0))
+    assert foreign.experiment_id == "drop_h50_m1"        # outside the battery
+    with pytest.raises(ValueError, match="not covered by prediction"):
+        agent.verify_predictions(committed, [foreign])
+    assert len(knowledge.verifications) == 1             # the refusal wrote nothing
+
+
+def test_identity_holds_on_competition_verification_path(lab, tmp_path):
+    """Test 3b: the competition path obeys the identity constraint. Rivals
+    committed under one condition cannot be verified against a record from
+    another condition; the matching record still verifies everyone."""
+    knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    other = agent.execute_proposal(
+        ConditionComparison(conditions=(("drop_height", 10.0),),
+                            predictions=(), disagreement=0.0),
+        kind="drop")
+    assert observation.experiment_id == "drop_h5_m1"     # committed battery
+    assert other.experiment_id == "drop_h10_m1"          # a different experiment
+
+    with pytest.raises(ValueError, match="not covered by prediction"):
+        agent.verify_competing_predictions(
+            records, other, OutputBinding({"y": "z"}), "y",
+            ObservationReduction(channel="z", rule="first"))
+    assert knowledge.verifications == {}                 # nothing slipped through
+
+    verifications = _verify_rivals(agent, records, observation)
+    assert len(verifications) == 2                       # matching record verifies
+    assert len(knowledge.verifications) == 2
+
+
+def test_spec_ref_format_parse_round_trip():
+    """Test 4: the identity format has ONE definition — commit-side
+    serialization and persistence-side parsing round-trip, and the belief
+    path's battery (several joined spec ids) covers exactly its members."""
+    ids = ["drop_h10_m1", "drop_h20_m1", "drop_h5_m1"]
+    spec_ref = format_spec_refs(ids)
+    assert spec_ref == "drop_h10_m1, drop_h20_m1, drop_h5_m1"
+    assert parse_spec_refs(spec_ref) == tuple(ids)
+    assert parse_spec_refs(
+        format_spec_refs(parse_spec_refs(spec_ref))) == tuple(ids)
+
+
+# -- Genesis P0-2: verification timestamps + collision-safe ledger ids --------
+#
+# VerificationRecords carry an informational created_at, and ledger ids are
+# derived from the highest existing ordinal (never from len(), which would
+# reuse ids after a deletion or a merge from an older store).
+
+def test_verification_record_carries_created_at(tmp_path):
+    """A persisted VerificationRecord carries an ISO-8601 created_at that
+    round-trips through save/reload."""
+    knowledge = _identity_knowledge(tmp_path)
+    committed = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    outcome = PredictionOutcome(claim="linear", predicted=5.0, observed=5.0,
+                                residual=0.0, status="confirmed")
+    record = knowledge.record_verification(
+        committed.prediction_id, "E1", outcome)
+
+    assert record.created_at                     # non-empty
+    assert record.created_at.startswith("20")    # ISO date prefix
+    assert "T" in record.created_at              # datetime, not just a date
+
+    reloaded = KnowledgeBase(knowledge.path, universe="universe_001")
+    assert reloaded.verifications[record.verification_id].created_at \
+        == record.created_at
+
+
+def test_ledger_ids_survive_gaps_and_merges(tmp_path):
+    """Ids come from the highest existing ordinal, not the store size: a
+    store that contains verif-0009 / pred-0009 (as a merge or partial
+    restore would) continues at 0010 instead of colliding at 0002."""
+    knowledge = _identity_knowledge(tmp_path)
+    first = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    assert first.prediction_id == "pred-0001"    # unchanged in the normal case
+    outcome = PredictionOutcome(claim="linear", predicted=5.0, observed=5.0,
+                                residual=0.0, status="confirmed")
+    verification = knowledge.record_verification(
+        first.prediction_id, "E1", outcome)
+    assert verification.verification_id == "verif-0001"
+
+    # simulate a merged/older store that already holds higher ordinals
+    knowledge.predictions["pred-0009"] = replace(first, prediction_id="pred-0009")
+    knowledge.verifications["verif-0009"] = replace(
+        verification, verification_id="verif-0009")
+
+    second = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    assert second.seq == 10
+    assert second.prediction_id == "pred-0010"   # NOT pred-0002
+    outcome2 = PredictionOutcome(claim="linear", predicted=5.0, observed=5.1,
+                                 residual=0.1, status="confirmed")
+    verification2 = knowledge.record_verification(
+        second.prediction_id, "E1", outcome2)
+    assert verification2.verification_id == "verif-0010"   # NOT verif-0002
+
+
+def test_pre_contract_verification_file_loads_unchanged(tmp_path):
+    """A store written before created_at existed loads unchanged: missing
+    keys default to empty strings, and re-saving keeps the laws intact."""
+    path = tmp_path / "old_verifications.json"
+    law = {"name": "gravity", "formula": "g = 9.81 m/s^2", "value": 9.81,
+           "unit": "m/s^2", "confidence": 0.999, "r2": 1.0,
+           "experiments": ["drop_h10_m1"], "derived_by": "polynomial",
+           "properties": {}}
+    path.write_text(json.dumps(
+        {"universe": "universe_001", "updated": "2026-01-01T00:00:00+00:00",
+         "laws": [law]}), encoding="utf-8")
+
+    knowledge = KnowledgeBase(path, universe="universe_001")
+    assert knowledge.verifications == {}
+    knowledge.record_law("gravity", "g = 9.81 m/s^2", 9.81, "m/s^2",
+                         0.999, 1.0, ["drop_h10_m1"], "polynomial")
+    knowledge.save()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["laws"][0]["name"] == "gravity"   # laws untouched by the bump
+
+
+# -- Genesis P0-3: the verification lifecycle is explicit and pinned ----------
+#
+# The exact machine (documented on PredictionRecord / record_verification):
+#   open -> confirmed | refuted; confirmed -> refuted (a later verification
+#   may overturn a confirmation); refuted is ABSORBING — later verifications
+#   still append records, but the status never leaves refuted. No other
+#   statuses exist; REOPENED is deliberately absent (no producer yet).
+
+def _verify_with(knowledge, prediction, experiment_id, observed, status):
+    residual = observed - prediction.predicted
+    return knowledge.record_verification(
+        prediction.prediction_id, experiment_id,
+        PredictionOutcome(claim=prediction.claim,
+                          predicted=prediction.predicted,
+                          observed=observed, residual=residual,
+                          status=status))
+
+
+def _lifecycle_knowledge(tmp_path):
+    knowledge = _identity_knowledge(tmp_path)
+    prediction = knowledge.commit_prediction(
+        model_ref="model L", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    return knowledge, prediction
+
+
+def test_lifecycle_open_to_confirmed(tmp_path):
+    knowledge, prediction = _lifecycle_knowledge(tmp_path)
+    _verify_with(knowledge, prediction, "E1", 5.0, "confirmed")
+    assert knowledge.prediction(prediction.prediction_id).status == "confirmed"
+
+
+def test_lifecycle_open_to_refuted(tmp_path):
+    knowledge, prediction = _lifecycle_knowledge(tmp_path)
+    _verify_with(knowledge, prediction, "E1", 9.0, "refuted")
+    assert knowledge.prediction(prediction.prediction_id).status == "refuted"
+
+
+def test_lifecycle_confirmed_can_be_overturned_by_later_refutation(tmp_path):
+    """A later verification MAY overturn a confirmation: the status flips to
+    refuted, and BOTH verdicts stay in the append-only ledger."""
+    knowledge, prediction = _lifecycle_knowledge(tmp_path)
+    _verify_with(knowledge, prediction, "E1", 5.0, "confirmed")
+    _verify_with(knowledge, prediction, "E1", 9.0, "refuted")
+    assert knowledge.prediction(prediction.prediction_id).status == "refuted"
+    assert len(knowledge.verifications_for(prediction.prediction_id)) == 2
+
+
+def test_lifecycle_refuted_is_absorbing(tmp_path):
+    """Once refuted, the status never leaves refuted: a later confirming
+    verification appends its record (the full history stays readable) but
+    does NOT flip the status back."""
+    knowledge, prediction = _lifecycle_knowledge(tmp_path)
+    _verify_with(knowledge, prediction, "E1", 9.0, "refuted")
+    record = _verify_with(knowledge, prediction, "E1", 5.0, "confirmed")
+
+    assert record.status == "confirmed"          # the verdict itself is real
+    assert knowledge.prediction(prediction.prediction_id).status == "refuted"
+    assert len(knowledge.verifications_for(prediction.prediction_id)) == 2
+
+
+def test_lifecycle_statuses_are_exactly_the_three(tmp_path):
+    """Only open / confirmed / refuted exist — REOPENED or SUPERSEDED must
+    not appear from normal operation."""
+    knowledge, prediction = _lifecycle_knowledge(tmp_path)
+    assert knowledge.prediction(prediction.prediction_id).status == "open"
+    _verify_with(knowledge, prediction, "E1", 5.0, "confirmed")
+    _verify_with(knowledge, prediction, "E1", 9.0, "refuted")
+    _verify_with(knowledge, prediction, "E1", 5.0, "confirmed")
+    statuses = {p.status for p in knowledge.predictions.values()}
+    assert statuses <= {"open", "confirmed", "refuted"}
+    assert {v.status for v in knowledge.verifications.values()} \
+        <= {"confirmed", "refuted"}
+
+
+
+# -- Genesis P1-4: the commitment binds its full verification contract --------
+#
+# "What the AI promised before the experiment" == "the only way it may be
+# adjudicated afterwards". The contract (condition binding, output binding,
+# output variable, observation reduction) lives INSIDE the commitment hash:
+# editing any part of it breaks the hash; verifying through a different
+# contract than the committed one is refused loudly; nothing is ever
+# silently substituted.
+
+def test_commitment_carries_the_full_contract(lab, tmp_path):
+    """A competition commitment records the whole declared contract, and
+    the condition binding is part of it."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    records, _ = _committed_rivals(agent)
+
+    for record in records:
+        assert record.condition_binding == {"x": "drop_height"}
+        assert record.output_binding == {"y": "z"}
+        assert record.output == "y"
+        assert record.reduction_channel == "z"
+        assert record.reduction_rule == "first"
+        assert verify_commitment(record)          # contract inside the hash
+
+
+def test_commitment_without_contract_refused(lab, tmp_path):
+    """A competition commitment without a declared contract is refused —
+    never silently filled with defaults."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 5.0}])
+    with pytest.raises(ValueError, match="must declare its verification"):
+        agent.commit_discriminating_predictions(
+            (h1, h2), proposal, kind="drop",
+            binding=ConditionBinding({"x": "drop_height"}),
+            tolerances={"linear": 0.01, "quadratic": 0.5})
+    assert knowledge.predictions == {}            # nothing was committed
+
+
+def test_contract_edits_break_the_commitment_hash(lab, tmp_path):
+    """Editing ANY part of the committed contract — output binding, output
+    variable, reduction channel/rule, condition binding, tolerance — breaks
+    the commitment hash, and the persistence gate refuses the record."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    records, _ = _committed_rivals(agent)
+    committed = records[0]
+    outcome = PredictionOutcome(
+        claim=committed.claim, predicted=committed.predicted,
+        observed=5.0, residual=5.0 - committed.predicted,
+        status="confirmed")
+
+    edits = [
+        ("output binding", replace(committed, output_binding={"y": "t"})),
+        ("output variable", replace(committed, output="u")),
+        ("reduction channel", replace(committed, reduction_channel="t")),
+        ("reduction rule", replace(committed, reduction_rule="")),
+        ("condition binding", replace(committed,
+                                      condition_binding={"x": "mass"})),
+        ("tolerance", replace(committed, tolerance=committed.tolerance + 0.5)),
+    ]
+    for label, tampered in edits:
+        assert not verify_commitment(tampered), label
+        knowledge.predictions[committed.prediction_id] = tampered
+        with pytest.raises(ValueError, match="hash mismatch"):
+            knowledge.record_verification(
+                committed.prediction_id, "drop_h5_m1", outcome)
+        knowledge.predictions[committed.prediction_id] = committed  # restore
+    # the untouched commitment still verifies and persists
+    knowledge.record_verification(committed.prediction_id, "drop_h5_m1",
+                                  outcome)
+    assert len(knowledge.verifications) == 1
+
+
+def test_caller_contract_mismatch_refused_before_anything_persists(lab, tmp_path):
+    """Verifying through a DIFFERENT contract than the committed one fails
+    loudly — and no VerificationRecord, status flip or save happens."""
+    knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    before = dict(knowledge.predictions)
+    snapshot = knowledge.path.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="contract mismatch"):
+        agent.verify_competing_predictions(
+            records, observation, OutputBinding({"y": "z"}), "y",
+            ObservationReduction(channel="z", rule=""))
+    with pytest.raises(ValueError, match="contract mismatch"):
+        agent.verify_competing_predictions(
+            records, observation, OutputBinding({"y": "z"}), "y",
+            ObservationReduction(channel="t", rule="first"))
+    with pytest.raises(ValueError, match="contract mismatch"):
+        agent.verify_competing_predictions(
+            records, observation, OutputBinding({"y": "t"}), "y",
+            ObservationReduction(channel="z", rule="first"))
+    with pytest.raises(ValueError, match="contract mismatch"):
+        agent.verify_competing_predictions(
+            records, observation, OutputBinding({"y": "z"}), "u",
+            ObservationReduction(channel="z", rule="first"))
+
+    assert knowledge.verifications == {}
+    assert knowledge.predictions == before
+    assert knowledge.path.read_text(encoding="utf-8") == snapshot
+
+
+def test_matching_contract_verifies_through_the_committed_contract(lab, tmp_path):
+    """The declared contract verifies: the caller's contract matches the
+    commitment, and the ACTUAL adjudication objects are rebuilt FROM the
+    commitment (verified by the verdicts behaving exactly as the committed
+    tolerance/rule imply)."""
+    _knowledge, agent, records, observation = _competed_and_executed(
+        lab, tmp_path, tolerances={"linear": 0.01, "quadratic": 0.5})
+    verifications = _verify_rivals(agent, records, observation)
+
+    assert len(verifications) == 2
+    statuses = {v.prediction_id: v.status for v in verifications}
+    linear = next(r for r in records if r.claim == "linear")
+    quadratic = next(r for r in records if r.claim == "quadratic")
+    assert statuses[linear.prediction_id] == "confirmed"    # 5.0 vs 4.997275
+    assert statuses[quadratic.prediction_id] == "refuted"   # 25.0 vs 4.997275
+
+
+def test_contract_persistence_round_trip(lab, tmp_path):
+    """A committed contract survives save/reload byte-for-byte and the
+    reloaded commitment still hash-verifies and adjudicates."""
+    knowledge, _agent, records, observation = _competed_and_executed(lab, tmp_path)
+
+    reloaded = KnowledgeBase(knowledge.path, universe="universe_001")
+    for record in records:
+        stored = reloaded.prediction(record.prediction_id)
+        assert stored.condition_binding == record.condition_binding
+        assert stored.output_binding == record.output_binding
+        assert stored.output == record.output
+        assert stored.reduction_channel == record.reduction_channel
+        assert stored.reduction_rule == record.reduction_rule
+        assert verify_commitment(stored)
+
+    reloaded_agent = ScientistAgent(lab, reloaded)
+    verifications = reloaded_agent.verify_competing_predictions(
+        [reloaded.prediction(r.prediction_id) for r in records],
+        observation, OutputBinding({"y": "z"}), "y",
+        ObservationReduction(channel="z", rule="first"))
+    assert len(verifications) == 2
+    assert len(reloaded.verifications) == 2
+
+
+def test_empty_contract_commitment_refused_on_competition_path(lab, tmp_path):
+    """A legacy (contract-less) commitment — the belief path's kind — can
+    NOT be adjudicated through the competition path: no invented contract,
+    no silent interpretation."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    legacy = knowledge.commit_prediction(
+        model_ref="innate prior", claim="gravity", spec_ref="drop_h5_m1",
+        value=5.0, tolerance=0.5)
+    record = lab.run_experiment(ExperimentSpec(kind="drop", drop_height=5.0))
+
+    with pytest.raises(ValueError, match="without a verification contract"):
+        agent.verify_competing_predictions(
+            [legacy], record, OutputBinding({"y": "z"}), "y",
+            ObservationReduction(channel="z", rule="first"))
+    assert knowledge.verifications == {}
+
+
+def test_v2_era_prediction_is_refused_not_reinterpreted(tmp_path):
+    """Compatibility policy: a v2-era commitment (predating contracts, with
+    its old 5-field hash) loads, but its hash no longer verifies and the
+    persistence gate REFUSES it — old commitments are never silently
+    re-interpreted under an invented contract."""
+    knowledge = _identity_knowledge(tmp_path)
+    v2_hash = commitment_hash({
+        "model_ref": "model X", "claim": "linear", "spec_ref": "E1",
+        "predicted": 5.0, "tolerance": 0.5})
+    knowledge.path.write_text(json.dumps({
+        "universe": "universe_001",
+        "schema_version": 2,
+        "updated": "2026-09-01T00:00:00+00:00",
+        "laws": [],
+        "predictions": [{
+            "prediction_id": "pred-0001", "model_ref": "model X",
+            "claim": "linear", "spec_ref": "E1", "predicted": 5.0,
+            "tolerance": 0.5, "committed_hash": v2_hash, "seq": 1,
+            "created_at": "2026-09-01T00:00:00+00:00", "status": "open",
+        }],
+        "verifications": [],
+    }), encoding="utf-8")
+
+    loaded = KnowledgeBase(knowledge.path, universe="universe_001")
+    prediction = loaded.prediction("pred-0001")
+    assert prediction is not None                  # it loads...
+    assert prediction.condition_binding == {}      # ...without a contract
+    assert not verify_commitment(prediction)       # ...hash no longer covers
+    outcome = PredictionOutcome(claim="linear", predicted=5.0, observed=5.0,
+                                residual=0.0, status="confirmed")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        loaded.record_verification("pred-0001", "E1", outcome)
+    assert loaded.verifications == {}              # nothing was written
+
+
+def test_belief_path_still_adjudicates_contract_free(lab, tmp_path):
+    """The legacy belief path is untouched: contract-less commitments hash
+    and adjudicate through the free-fall fit exactly as before."""
+    agent = _agent(lab, tmp_path)
+    report = agent.run_mission(MISSION)
+
+    assert report.status == "DISCOVERED"
+    committed = agent.last_committed_predictions[0]
+    assert committed.condition_binding == {}       # no contract declared
+    assert committed.output_binding == {}
+    assert verify_commitment(committed)            # empty contract hashed in
+    assert committed.status == "confirmed"         # legacy fit adjudication
+
+
+# -- Genesis P1-5: tolerance is declared, never defaulted ----------------------
+#
+# The competition commit path requires an explicit per-model tolerance (the
+# AI's own declared resolution, committed into the hash). A missing
+# tolerance is refused loudly — no silent 1.0, no auto-fill to make a test
+# pass. The belief path's tolerance already has a principled source (the
+# belief's own interval).
+
+def test_missing_tolerance_mapping_refused(lab, tmp_path):
+    """No tolerances at all -> refused; nothing is committed."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 5.0}])
+    with pytest.raises(ValueError, match="declared explicitly"):
+        agent.commit_discriminating_predictions(
+            (h1, h2), proposal, kind="drop",
+            binding=ConditionBinding({"x": "drop_height"}),
+            output_binding=OutputBinding({"y": "z"}), output="y",
+            reduction=ObservationReduction(channel="z", rule="first"))
+    assert knowledge.predictions == {}
+
+
+def test_partially_declared_tolerance_refused(lab, tmp_path):
+    """One rival without a tolerance -> refused BY NAME; the other rival's
+    tolerance is never filled from any default."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 5.0}])
+    with pytest.raises(ValueError, match="quadratic"):
+        agent.commit_discriminating_predictions(
+            (h1, h2), proposal, kind="drop",
+            tolerances={"linear": 0.3},     # quadratic missing
+            binding=ConditionBinding({"x": "drop_height"}),
+            output_binding=OutputBinding({"y": "z"}), output="y",
+            reduction=ObservationReduction(channel="z", rule="first"))
+    assert knowledge.predictions == {}      # no half-committed rivals
+
+
+def test_declared_tolerances_are_the_only_source(lab, tmp_path):
+    """Every committed tolerance equals its declared value — 1.0 appears
+    only when the AI actually declares it."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 5.0}])
+    records = agent.commit_discriminating_predictions(
+        (h1, h2), proposal, kind="drop",
+        tolerances={"linear": 0.02, "quadratic": 1.0},   # 1.0 BY DECLARATION
+        binding=ConditionBinding({"x": "drop_height"}),
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
+    assert {r.claim: r.tolerance for r in records} == {
+        "linear": 0.02, "quadratic": 1.0}
+    assert all(verify_commitment(r) for r in records)

@@ -635,7 +635,9 @@ ConditionBinding ─▶ ExperimentSpec      ObservationRecord
 Key invariants (structurally enforced by tests):
 
 - **Commitment before observation** — the hash anchors the five scientific
-  fields; a committed prediction can never be silently edited, only superseded.
+  fields PLUS the declared verification contract (condition/output binding,
+  observation reduction); a committed prediction can never be silently edited
+  or adjudicated through a different contract, only superseded.
 - **Two-vocabulary contracts** — `ConditionBinding` (model variable →
   ExperimentSpec parameter) and `OutputBinding` (model output → observation
   field) are declared data; unmapped or out-of-vocabulary names fail loudly.

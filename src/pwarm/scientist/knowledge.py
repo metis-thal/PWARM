@@ -14,6 +14,7 @@ layout, and files written by earlier missions (laws only) load unchanged.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,13 +27,33 @@ from .prediction import (
     VerificationRecord,
     commitment_hash,
     commitment_payload,
+    parse_spec_refs,
     verify_commitment,
 )
 from .prediction import (
     competition_state as build_competition_state,
 )
 
-SCHEMA_VERSION = 2
+# Schema 3: PredictionRecords carry their declared verification contract
+# (condition/output binding + observation reduction) inside the commitment
+# hash. Older files load unchanged; v2-era predictions (committed before
+# contracts existed) fail verify_commitment and are REFUSED for
+# adjudication — never silently re-interpreted under an invented contract.
+SCHEMA_VERSION = 3
+
+
+def _next_ordinal(ids, prefix: str) -> int:
+    """One past the highest numeric suffix among ``prefixNNNN`` ids.
+
+    Monotonic even if records were ever removed or merged from an older
+    store — unlike a ``len()``-based counter, which would reuse ids and
+    silently collide two distinct ledger entries.
+    """
+    pattern = re.compile(rf"^{prefix}(\d+)$")
+    highest = max((int(m.group(1)) for i in ids
+                   if (m := pattern.match(i))), default=0)
+    return highest + 1
+
 
 
 @dataclass
@@ -98,6 +119,11 @@ class KnowledgeBase:
                 spec_ref=rec.get("spec_ref", ""),
                 predicted=float(rec.get("predicted", 0.0)),
                 tolerance=float(rec.get("tolerance", 0.0)),
+                condition_binding=dict(rec.get("condition_binding", {})),
+                output_binding=dict(rec.get("output_binding", {})),
+                output=rec.get("output", ""),
+                reduction_channel=rec.get("reduction_channel", ""),
+                reduction_rule=rec.get("reduction_rule", ""),
                 committed_hash=rec.get("committed_hash", ""),
                 seq=int(rec.get("seq", 0)),
                 created_at=rec.get("created_at", ""),
@@ -114,6 +140,7 @@ class KnowledgeBase:
                 residual=float(rec.get("residual", 0.0)),
                 status=rec.get("status", ""),
                 evidence=rec.get("evidence", ""),
+                created_at=rec.get("created_at", ""),
             )
             for rec in data.get("verifications", [])
         }
@@ -180,16 +207,27 @@ class KnowledgeBase:
     # -- Genesis Phase 1: prediction commitments (append-only kinds) ---------
 
     def commit_prediction(self, model_ref: str, claim: str, spec_ref: str,
-                          value: float, tolerance: float) -> PredictionRecord:
+                          value: float, tolerance: float,
+                          condition_binding: dict[str, str] | None = None,
+                          output_binding: dict[str, str] | None = None,
+                          output: str = "",
+                          reduction_channel: str = "",
+                          reduction_rule: str = "") -> PredictionRecord:
         """Hash and persist a commitment BEFORE the experiment runs.
 
         The record is append-only scientific history: the committed content
-        (model_ref, claim, spec_ref, predicted, tolerance) is covered by a
-        sha256 hash, nothing may edit it afterwards (check with
-        :func:`verify_commitment`), and a changed mind commits a NEW
-        prediction instead.
+        (model_ref, claim, spec_ref, predicted, tolerance, plus the declared
+        verification contract — condition/output binding and observation
+        reduction) is covered by a sha256 hash, nothing may edit it
+        afterwards (check with :func:`verify_commitment`), and a changed
+        mind commits a NEW prediction instead.
+
+        The verification contract kwargs are store-level plumbing: the
+        competition path fills them (its commitments are contract-complete);
+        the legacy belief path commits without one and adjudicates through
+        the free-fall fit.
         """
-        seq = len(self.predictions) + 1
+        seq = _next_ordinal(self.predictions, "pred-")
         prediction_id = f"pred-{seq:04d}"
         record = PredictionRecord(
             prediction_id=prediction_id,
@@ -198,7 +236,11 @@ class KnowledgeBase:
             spec_ref=spec_ref,
             predicted=float(value),
             tolerance=float(tolerance),
-            committed_hash="",
+            condition_binding=dict(condition_binding or {}),
+            output_binding=dict(output_binding or {}),
+            output=output,
+            reduction_channel=reduction_channel,
+            reduction_rule=reduction_rule,
             seq=seq,
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
@@ -212,9 +254,29 @@ class KnowledgeBase:
                             outcome: PredictionOutcome) -> VerificationRecord:
         """Append a VerificationRecord and resolve the prediction's status.
 
-        This is the ONLY sanctioned status transition (open -> confirmed |
-        refuted; a refutation is final for the phase). The committed content
-        stays immutable and hash-checkable; a tampered record is refused.
+        This is the ONLY sanctioned status transition. The prediction's
+        status machine (explicit, tested):
+
+            open ----confirmed verdict----> confirmed
+            open ----refuted verdict-----> refuted
+            confirmed --refuted verdict--> refuted     (a later verification
+                                                        may overturn a
+                                                        confirmation)
+            refuted ----any verdict------> refuted     (ABSORBING: later
+                                                        verifications still
+                                                        append records, but
+                                                        the status never
+                                                        leaves refuted)
+
+        No other statuses or transitions exist at this layer. The committed
+        content stays immutable and hash-checkable; a tampered record is
+        refused.
+
+        Identity integrity: ``experiment_id`` must be covered by the
+        commitment's ``spec_ref`` (the declared experiment battery, parsed
+        by :func:`parse_spec_refs`). A verification against any other
+        experiment is refused loudly — nothing is appended, no status flips,
+        nothing is saved.
         """
         prediction = self.predictions.get(prediction_id)
         if prediction is None:
@@ -223,7 +285,13 @@ class KnowledgeBase:
             raise ValueError(
                 f"commitment hash mismatch for {prediction_id}: refusing to "
                 "verify a tampered prediction")
-        verification_id = f"verif-{len(self.verifications) + 1:04d}"
+        if experiment_id not in parse_spec_refs(prediction.spec_ref):
+            raise ValueError(
+                f"experiment {experiment_id!r} is not covered by prediction "
+                f"{prediction_id}'s committed spec_ref "
+                f"{prediction.spec_ref!r} — a prediction may only be "
+                "verified against experiments it was committed for")
+        verification_id = f"verif-{_next_ordinal(self.verifications, 'verif-'):04d}"
         record = VerificationRecord(
             verification_id=verification_id,
             prediction_id=prediction_id,
@@ -233,6 +301,7 @@ class KnowledgeBase:
             status=outcome.status,
             evidence=(f"|observed - predicted| = {abs(outcome.residual):.6g} "
                       f"vs tolerance {prediction.tolerance:g}"),
+            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
         self.verifications[verification_id] = record
         if prediction.status != "refuted":

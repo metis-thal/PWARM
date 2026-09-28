@@ -36,6 +36,7 @@ from .prediction import (
     VerificationRecord,
     adjudicate,
     comparison_input,
+    format_spec_refs,
     model_prediction,
     prediction_from_belief,
     rank_discriminating_conditions,
@@ -162,16 +163,30 @@ class ScientistAgent:
 
     def commit_predictions(self, guesses: list[Prediction],
                            specs: list[ExperimentSpec],
+                           condition_binding: dict[str, str] | None = None,
+                           output_binding: dict[str, str] | None = None,
+                           output: str = "",
+                           reduction_channel: str = "",
+                           reduction_rule: str = "",
                            ) -> list[PredictionRecord]:
         """Hash and persist each commitment — BEFORE physics runs. From
         here on the predictions are immutable scientific history: a changed
         mind commits a NEW prediction, never an edit.
+
+        The verification-contract kwargs (condition/output binding and
+        observation reduction) become part of the hashed commitment when
+        given: what the AI promised and HOW it may be adjudicated are
+        frozen together. The legacy belief path commits without one.
         """
-        spec_ref = ", ".join(spec.id for spec in specs)
+        spec_ref = format_spec_refs([spec.id for spec in specs])
         return [self.knowledge.commit_prediction(
                     model_ref=guess.source, claim=guess.claim,
                     spec_ref=spec_ref, value=guess.value,
-                    tolerance=guess.tolerance)
+                    tolerance=guess.tolerance,
+                    condition_binding=condition_binding,
+                    output_binding=output_binding, output=output,
+                    reduction_channel=reduction_channel,
+                    reduction_rule=reduction_rule)
                 for guess in guesses]
 
     def verify_predictions(self, committed: list[PredictionRecord],
@@ -247,8 +262,11 @@ class ScientistAgent:
             self, models: Sequence[ScientificModel],
             proposal: ConditionComparison,
             kind: str,
-            binding: ConditionBinding | None = None,
             tolerances: Mapping[str, float] | None = None,
+            binding: ConditionBinding | None = None,
+            output_binding: OutputBinding | None = None,
+            output: str | None = None,
+            reduction: ObservationReduction | None = None,
             ) -> list[PredictionRecord]:
         """Commit EVERY rival model's prediction under the winning
         condition, BEFORE the experiment runs.
@@ -259,14 +277,49 @@ class ScientistAgent:
         the SAME experiment spec. Nothing runs here — no Laboratory call,
         no verification, no belief change; execution and adjudication
         are later steps.
+
+        Tolerances are the AI's own declared per-model resolution — the
+        tolerance's source is this explicit mapping, and the values are
+        committed into each hash. ``tolerances`` is REQUIRED and must
+        cover every model: a missing tolerance is refused loudly, never
+        defaulted (a guessed acceptance band would be a heuristic posing
+        as science).
+
+        The verification contract (output binding, output variable,
+        observation reduction — and the condition binding when one renames
+        the model's conditions) is REQUIRED too and becomes part of each
+        hashed commitment: what the AI promised and how it may later be
+        adjudicated are frozen together. A commitment without a contract
+        is refused, never silently filled.
         """
+        if tolerances is None:
+            raise ValueError(
+                "tolerances must be declared explicitly per model — no "
+                "default tolerance is guessed")
+        missing = [model.model_id for model in models
+                   if model.model_id not in tolerances]
+        if missing:
+            raise ValueError(
+                f"no tolerance declared for model(s) {sorted(missing)} — "
+                "every rival needs its own explicit tolerance")
+        if output_binding is None or output is None or reduction is None:
+            raise ValueError(
+                "a competition commitment must declare its verification "
+                "contract: output_binding, output and reduction are "
+                "required, never defaulted")
+        output_binding.field_for(output)    # the declared contract must resolve
         spec = proposal_to_spec(proposal, kind, binding)
         conditions = dict(proposal.conditions)
-        per_model = tolerances or {}
         guesses = [model_prediction(model, conditions,
-                                    per_model.get(model.model_id, 1.0))
+                                    tolerances[model.model_id])
                    for model in models]
-        return self.commit_predictions(guesses, [spec])
+        return self.commit_predictions(
+            guesses, [spec],
+            condition_binding=dict(binding.mapping) if binding else {},
+            output_binding=dict(output_binding.mapping),
+            output=output,
+            reduction_channel=reduction.channel,
+            reduction_rule=reduction.rule)
 
     # -- Genesis Step 7: one observation, many competing verdicts ------------
 
@@ -280,24 +333,50 @@ class ScientistAgent:
         """Verify EVERY committed prediction against ONE observation record.
 
         One experiment, one record — but each committed prediction is
-        adjudicated independently through the existing path: its
-        commitment hash is checked (tampering refused), the prediction is
-        rebuilt from the immutable record, the reduced observation scalar
-        is compared via verify_prediction's single rule, and one
-        VerificationRecord is persisted per prediction (each carrying its
-        own prediction_id, all sharing the record's experiment_id). No
-        winner, no elimination, no belief update — and the Laboratory is
-        never called.
+        adjudicated independently. The adjudication contract is rebuilt
+        FROM each immutable commitment (hash-checked at persistence), and
+        the caller's contract is checked against it first: a prediction is
+        verified only through the contract it committed — a differing
+        binding or reduction is refused loudly, never silently substituted.
+        Each verdict is persisted as its own VerificationRecord (each
+        carrying its own prediction_id, all sharing the record's
+        experiment_id). No winner, no elimination, no belief update — and
+        the Laboratory is never called.
         """
         verifications = []
         for committed_prediction in committed:
+            if not committed_prediction.output_binding \
+                    or not committed_prediction.reduction_rule:
+                raise ValueError(
+                    f"{committed_prediction.prediction_id} was committed "
+                    "without a verification contract — it cannot be "
+                    "adjudicated through the competition path")
+            declared = (dict(output_binding.mapping), output,
+                        reduction.channel, reduction.rule)
+            committed_contract = (dict(committed_prediction.output_binding),
+                                  committed_prediction.output,
+                                  committed_prediction.reduction_channel,
+                                  committed_prediction.reduction_rule)
+            if declared != committed_contract:
+                raise ValueError(
+                    f"verification contract mismatch for "
+                    f"{committed_prediction.prediction_id}: committed "
+                    f"{committed_contract} vs caller {declared} — a "
+                    "prediction is verified only through the contract "
+                    "it committed")
             rebuilt = Prediction(
                 claim=committed_prediction.claim,
                 value=committed_prediction.predicted,
                 tolerance=committed_prediction.tolerance,
                 source=committed_prediction.model_ref)
-            aligned = comparison_input(rebuilt, record, output_binding, output)
-            outcome = verify_prediction(rebuilt, reduction.reduce(aligned))
+            binding = OutputBinding(dict(committed_prediction.output_binding))
+            aligned = comparison_input(rebuilt, record, binding,
+                                       committed_prediction.output)
+            committed_reduction = ObservationReduction(
+                channel=committed_prediction.reduction_channel,
+                rule=committed_prediction.reduction_rule)
+            outcome = verify_prediction(rebuilt,
+                                        committed_reduction.reduce(aligned))
             verifications.append(self.knowledge.record_verification(
                 committed_prediction.prediction_id, record.experiment_id,
                 outcome))

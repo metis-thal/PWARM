@@ -90,6 +90,11 @@ def model_prediction(model: ScientificModel,
 
     The formula is determined by ``model_id`` (e.g. "linear",
     "quadratic"). Parameters are read from ``model.params``.
+
+    The ``tolerance`` default serves PRE-commitment ranking only (disagreement
+    ranking never reads it). A tolerance that bears on a VERDICT must be
+    declared explicitly at commitment time — the competition commit path
+    refuses to guess one.
     """
     formula = _FORMULAS.get(model.model_id)
     if formula is None:
@@ -330,10 +335,20 @@ class Prediction:
 class PredictionRecord:
     """A committed prediction — append-only scientific history.
 
-    ``committed_hash`` covers the five scientific fields (model_ref, claim,
-    spec_ref, predicted, tolerance); seq / created_at / status are
-    bookkeeping and stay outside the hash. Status may only move
-    ``open -> confirmed | refuted`` via the verification path.
+    ``committed_hash`` covers the scientific fields: model_ref, claim,
+    spec_ref, predicted, tolerance AND the declared verification contract
+    (condition_binding, output_binding, output, reduction_channel,
+    reduction_rule) — what the AI promised and HOW it may be adjudicated,
+    all frozen before the experiment runs. seq / created_at / status are
+    bookkeeping and stay outside the hash.
+
+    Status machine (the only sanctioned writes, performed by the
+    verification path in ``KnowledgeBase.record_verification``):
+    ``open -> confirmed | refuted``; a later verification may overturn a
+    confirmation (``confirmed -> refuted``); ``refuted`` is ABSORBING —
+    later verifications still append records, but the status never leaves
+    refuted. A changed mind commits a NEW prediction; historical
+    predictions are never edited or deleted.
     """
 
     prediction_id: str
@@ -342,15 +357,57 @@ class PredictionRecord:
     spec_ref: str                 # conditions: the planned experiment specs
     predicted: float
     tolerance: float
-    committed_hash: str
-    seq: int                      # monotonic commitment index
-    created_at: str               # ISO timestamp (informational)
+    # -- the declared verification contract (hashed) ------------------------
+    condition_binding: dict[str, str] = field(default_factory=dict)
+    # model condition variable -> ExperimentSpec parameter ({} when the
+    # proposal already spoke spec vocabulary)
+    output_binding: dict[str, str] = field(default_factory=dict)
+    # model output variable -> ObservationRecord field ({} only for the
+    # legacy belief path, whose contract is the free-fall fit)
+    output: str = ""              # the model output variable compared
+    reduction_channel: str = ""   # ObservationReduction channel
+    reduction_rule: str = ""      # ObservationReduction rule
+    # -- bookkeeping (outside the hash) --------------------------------------
+    committed_hash: str = ""
+    seq: int = 0                  # monotonic commitment index
+    created_at: str = ""          # ISO timestamp (informational)
     status: str = "open"          # open | confirmed | refuted
+
+
+# -- Experiment identity: the spec_ref contract ------------------------------
+#
+# A committed prediction declares, in ``spec_ref``, WHICH experiments it may
+# be verified against: the planned battery's experiment ids joined with
+# ", ". A verification persisted into the ledger must reference an
+# experiment from this declared set — a prediction committed for E1 is never
+# verifiable against E2. The two helpers below are the single definition of
+# that format; the commit side serializes through ``format_spec_refs`` and
+# the persistence side parses through ``parse_spec_refs``, so the identity
+# relationship has exactly one source.
+
+def format_spec_refs(spec_ids: Sequence[str]) -> str:
+    """Serialize the planned experiment battery into a PredictionRecord's
+    ``spec_ref`` (", "-joined experiment ids)."""
+    return ", ".join(spec_ids)
+
+
+def parse_spec_refs(spec_ref: str) -> tuple[str, ...]:
+    """The experiment ids a committed prediction's ``spec_ref`` covers."""
+    return tuple(s.strip() for s in spec_ref.split(",") if s.strip())
 
 
 @dataclass(frozen=True)
 class VerificationRecord:
-    """Verdict for one committed prediction against ONE new observation."""
+    """Verdict for one committed prediction against ONE new observation.
+
+    ``experiment_id`` must be covered by the owning prediction's committed
+    ``spec_ref`` (see ``parse_spec_refs``) — the persistence gate refuses
+    any other experiment, so verification ↔ commitment identity can never
+    mismatch in the ledger.
+
+    ``created_at`` is informational bookkeeping (like PredictionRecord's):
+    temporal ordering of the ledger is carried by the verification ids.
+    """
 
     verification_id: str
     prediction_id: str
@@ -359,6 +416,7 @@ class VerificationRecord:
     residual: float               # observed - predicted
     status: str                   # confirmed | refuted
     evidence: str                 # human-readable comparison result
+    created_at: str = ""          # ISO timestamp (informational)
 
 
 @dataclass(frozen=True)
@@ -516,13 +574,19 @@ def prediction_from_belief(belief: Belief) -> Prediction:
 
 def commitment_payload(record: PredictionRecord) -> dict:
     """The tamper-evident content of a commitment: the scientific fields
-    only (bookkeeping fields stay outside the hash)."""
+    AND the declared verification contract (bookkeeping fields stay
+    outside the hash)."""
     return {
         "model_ref": record.model_ref,
         "claim": record.claim,
         "spec_ref": record.spec_ref,
         "predicted": round(float(record.predicted), 12),
         "tolerance": round(float(record.tolerance), 12),
+        "condition_binding": dict(record.condition_binding),
+        "output_binding": dict(record.output_binding),
+        "output": record.output,
+        "reduction_channel": record.reduction_channel,
+        "reduction_rule": record.reduction_rule,
     }
 
 
