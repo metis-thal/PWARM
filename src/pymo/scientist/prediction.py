@@ -378,21 +378,37 @@ class EvidenceSummary:
     collections are deterministically ordered (verification id order for the
     per-evidence lists; sorted for the distinct id sets).
 
-    ``independent_experiments`` is the number of DISTINCT experiment ids a
-    model's evidence spans — the same experiment verified twice counts once.
-    ``verification_count`` counts every persisted VerificationRecord.
+    The three independent counts are deliberately distinguished from the raw
+    count:
+
+    * ``verification_count`` — every persisted VerificationRecord, including
+      re-verifications of the same (prediction, experiment) pair.
+    * ``independent_prediction_count`` — the number of DISTINCT prediction_ids.
+    * ``independent_experiment_count`` — the number of DISTINCT experiment_ids.
+    * ``independent_evidence_count`` — the number of DISTINCT
+      (prediction_id, experiment_id) pairs, i.e. non-redundant verification
+      events. Re-verifying the SAME prediction against the SAME experiment
+      does NOT add independent evidence; a distinct prediction OR a distinct
+      experiment does.
+    * ``independent_evidence`` — one representative :class:`VerificationRecord`
+      per distinct (prediction_id, experiment_id) pair (the first, in
+      verification-id order), so each independent evidence keeps its
+      experiment_id / prediction_id / status / residual.
     """
 
     model_ref: str
     prediction_ids: tuple[str, ...]           # distinct, sorted
     experiment_ids: tuple[str, ...]           # distinct, sorted
-    independent_experiments: int              # len(experiment_ids)
+    independent_prediction_count: int         # len(prediction_ids)
+    independent_experiment_count: int         # len(experiment_ids)
+    independent_evidence_count: int           # distinct (prediction, experiment) pairs
     verification_count: int                   # every persisted VerificationRecord
     confirmed_count: int
     refuted_count: int
     residuals: tuple[float, ...]              # one per verification, deterministic order
     statuses: tuple[str, ...]                 # aligned with residuals
     evidence: tuple[VerificationRecord, ...]  # per-evidence linkage, same order
+    independent_evidence: tuple[VerificationRecord, ...]  # one per distinct pair
 
 
 @dataclass(frozen=True)

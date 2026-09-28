@@ -1875,7 +1875,7 @@ def _step8_scenario(tmp_path):
             b_predictions, b_verifications)
 
 
-def test_a_three_independent_experiments_counted(tmp_path):
+def test_a_three_independent_experiment_count_counted(tmp_path):
     """TEST A: one model, 3 independent experiments (confirmed, confirmed,
     refuted) -> the summary counts exactly 3."""
     knowledge, _, _, _, _ = _step8_scenario(tmp_path)
@@ -1884,7 +1884,7 @@ def test_a_three_independent_experiments_counted(tmp_path):
     assert summary.verification_count == 3
     assert summary.confirmed_count == 2
     assert summary.refuted_count == 1
-    assert summary.independent_experiments == 3
+    assert summary.independent_experiment_count == 3
     assert summary.experiment_ids == ("E1", "E2", "E3")
 
 
@@ -1915,7 +1915,7 @@ def test_c_same_experiment_counts_once_per_model(tmp_path):
     summary = knowledge.evidence_for_model("model C")
 
     assert summary.verification_count == 2
-    assert summary.independent_experiments == 1
+    assert summary.independent_experiment_count == 1
     assert summary.experiment_ids == ("E1",)
 
 
@@ -1935,7 +1935,7 @@ def test_d_same_prediction_not_double_counted(tmp_path):
     summary = knowledge.evidence_for_model("model D")
 
     assert summary.verification_count == 2
-    assert summary.independent_experiments == 2
+    assert summary.independent_experiment_count == 2
     assert summary.prediction_ids == (pred.prediction_id,)
 
 
@@ -2098,21 +2098,278 @@ def test_step8_full_scenario_no_verdict_fields(tmp_path):
     # Model A: 3 independent experiments, 2 confirmed 1 refuted
     assert summary_a.verification_count == 3
     assert summary_a.confirmed_count == 2 and summary_a.refuted_count == 1
-    assert summary_a.independent_experiments == 3
+    assert summary_a.independent_experiment_count == 3
     assert summary_a.experiment_ids == ("E1", "E2", "E3")
 
     # Model B: 2 independent experiments, 1 confirmed 1 refuted
     assert summary_b.verification_count == 2
     assert summary_b.confirmed_count == 1 and summary_b.refuted_count == 1
-    assert summary_b.independent_experiments == 2
+    assert summary_b.independent_experiment_count == 2
     assert summary_b.experiment_ids == ("E1", "E2")
 
     # the summaries expose only evidence-accounting fields — never a verdict
     allowed = {"model_ref", "prediction_ids", "experiment_ids",
-               "independent_experiments", "verification_count",
+               "independent_prediction_count", "independent_experiment_count",
+               "independent_evidence_count", "independent_evidence",
+               "verification_count",
                "confirmed_count", "refuted_count", "residuals", "statuses",
                "evidence"}
     for summary in (summary_a, summary_b):
         assert set(dataclasses.asdict(summary)) == allowed
         assert not any("winner" in str(v) or "survivor" in str(v)
                        for v in summary.evidence)
+
+
+# -- Genesis Step 9: independent evidence semantics ---------------------------
+#
+# verification_count (all persisted records) is NOT the independent evidence
+# count. Independent evidence is defined as a distinct (prediction_id,
+# experiment_id) pair: re-verifying the SAME prediction against the SAME
+# experiment adds no independent evidence, while a distinct prediction OR a
+# distinct experiment does. These tests pin that definition and the three
+# independent counts it implies.
+
+def _duplicate_verify(knowledge, model_ref, prediction, experiment_id,
+                      observed, status):
+    """Re-verify an EXISTING prediction against an experiment (append-only)."""
+    residual = observed - prediction.predicted
+    outcome = PredictionOutcome(
+        claim=prediction.claim, predicted=prediction.predicted,
+        observed=observed, residual=residual, status=status)
+    return knowledge.record_verification(
+        prediction.prediction_id, experiment_id, outcome)
+
+
+def test_step9_a_duplicate_verification_not_independent(tmp_path):
+    """TEST A: the same prediction re-verified against the SAME experiment
+    grows verification_count but NEVER the independent counts."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    preds, _ = _commit_and_verify(knowledge, "model X", [
+        ("linear", 5.0, 0.5, "E1", 5.0),     # P1 -> E1 -> confirmed
+    ])
+    _duplicate_verify(knowledge, "model X", preds[0], "E1", 5.0, "confirmed")
+    summary = knowledge.evidence_for_model("model X")
+
+    assert summary.verification_count == 2            # both persisted
+    assert summary.independent_prediction_count == 1  # one prediction
+    assert summary.independent_experiment_count == 1  # one experiment
+    assert summary.independent_evidence_count == 1    # ONE pair, not repeated
+    assert len(summary.independent_evidence) == 1
+
+
+def test_step9_b_same_prediction_different_experiments(tmp_path):
+    """TEST B: one prediction verified against several DISTINCT experiments IS
+    multiple independent evidence — each experiment is an independent
+    observation testing the same claim."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    preds, _ = _commit_and_verify(knowledge, "model X", [
+        ("linear", 5.0, 0.5, "E1", 5.0),     # P1 -> E1 -> confirmed
+    ])
+    _duplicate_verify(knowledge, "model X", preds[0], "E2", 5.0, "confirmed")
+    _duplicate_verify(knowledge, "model X", preds[0], "E3", 5.0, "confirmed")
+    summary = knowledge.evidence_for_model("model X")
+
+    assert summary.verification_count == 3
+    assert summary.independent_prediction_count == 1    # one prediction
+    assert summary.independent_experiment_count == 3    # three experiments
+    assert summary.independent_evidence_count == 3      # three distinct pairs
+    assert {v.experiment_id for v in summary.independent_evidence} == \
+        {"E1", "E2", "E3"}
+
+
+def test_step9_c_different_predictions_same_experiment(tmp_path):
+    """TEST C: several DISTINCT predictions verified against ONE experiment is
+    multiple independent evidence at the pair level (one per prediction), BUT
+    they all share a single experimental observation — a caveat the future
+    weighting step must respect."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model X", [
+        ("linear", 5.0, 0.5, "E1", 5.0),     # P1 -> E1 -> confirmed
+        ("quadratic", 9.0, 0.5, "E1", 8.0),  # P2 -> E1 -> refuted
+    ])
+    summary = knowledge.evidence_for_model("model X")
+
+    assert summary.verification_count == 2
+    assert summary.independent_prediction_count == 2   # two predictions
+    assert summary.independent_experiment_count == 1   # one experiment
+    assert summary.independent_evidence_count == 2     # two distinct pairs
+    assert summary.experiment_ids == ("E1",)
+    assert summary.independent_experiment_count < summary.independent_evidence_count
+
+
+def test_step9_d_different_prediction_and_experiment(tmp_path):
+    """TEST D: distinct prediction AND distinct experiment is the clearest
+    independent evidence — all independent counts coincide."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model X", [
+        ("linear", 5.0, 0.5, "E1", 5.0),     # P1 -> E1 -> confirmed
+        ("quadratic", 9.0, 0.5, "E2", 8.0),  # P2 -> E2 -> refuted
+    ])
+    summary = knowledge.evidence_for_model("model X")
+
+    assert summary.verification_count == 2
+    assert summary.independent_prediction_count == 2
+    assert summary.independent_experiment_count == 2
+    assert summary.independent_evidence_count == 2
+    assert summary.experiment_ids == ("E1", "E2")
+
+
+def test_step9_e_two_models_counted_independently(tmp_path):
+    """TEST E: two models' independent evidence are computed independently,
+    even when they share experiments and predictions never overlap."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    a_preds, _ = _commit_and_verify(knowledge, "model A", [
+        ("linear", 5.0, 0.5, "E1", 5.0),     # A1 -> E1 -> confirmed
+        ("linear", 6.0, 0.5, "E2", 6.0),     # A2 -> E2 -> confirmed
+    ])
+    _duplicate_verify(knowledge, "model A", a_preds[0], "E1", 5.0, "confirmed")
+    _commit_and_verify(knowledge, "model B", [
+        ("quadratic", 8.0, 0.5, "E1", 9.0),  # B1 -> E1 -> refuted
+        ("quadratic", 9.0, 0.5, "E3", 8.0),  # B2 -> E3 -> refuted
+    ])
+    summary_a = knowledge.evidence_for_model("model A")
+    summary_b = knowledge.evidence_for_model("model B")
+
+    assert summary_a.verification_count == 3
+    assert summary_a.independent_evidence_count == 2   # (A1,E1) + (A2,E2)
+    assert summary_b.verification_count == 2
+    assert summary_b.independent_evidence_count == 2
+    assert set(summary_a.prediction_ids).isdisjoint(set(summary_b.prediction_ids))
+    # the shared E1 counts once for each model, but never leaks across models
+    assert summary_a.independent_experiment_count == 2
+    assert summary_b.independent_experiment_count == 2
+
+
+def test_step9_f_deterministic(tmp_path):
+    """TEST F: identical store -> byte-identical independent evidence."""
+    def _run(path):
+        knowledge = KnowledgeBase(path, universe="universe_001")
+        preds, _ = _commit_and_verify(knowledge, "model X", [
+            ("linear", 5.0, 0.5, "E1", 5.0),
+        ])
+        _duplicate_verify(knowledge, "model X", preds[0], "E2", 5.0, "confirmed")
+        return knowledge.evidence_for_model("model X")
+
+    assert _run(tmp_path / "a.json") == _run(tmp_path / "b.json")
+
+
+def test_step9_g_no_record_modification(tmp_path):
+    """TEST G: summarizing changes no persisted record — predictions and
+    verifications (including their order) are untouched."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model X", [
+        ("linear", 5.0, 0.5, "E1", 5.0),
+        ("quadratic", 9.0, 0.5, "E1", 8.0),
+    ])
+    before_predictions = dict(knowledge.predictions)
+    before_verifications = dict(knowledge.verifications)
+
+    knowledge.evidence_for_model("model X")
+
+    assert knowledge.predictions == before_predictions
+    assert knowledge.verifications == before_verifications
+
+
+def test_step9_h_no_new_verification(tmp_path):
+    """TEST H: summarizing creates no VerificationRecord."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model X", [
+        ("linear", 5.0, 0.5, "E1", 5.0),
+    ])
+    count_before = len(knowledge.verifications)
+
+    knowledge.evidence_for_model("model X")
+
+    assert len(knowledge.verifications) == count_before
+
+
+def test_step9_i_no_physics_call(lab, tmp_path):
+    """TEST I: summarizing is a pure store query — the Laboratory is never
+    called."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model X", [
+        ("linear", 5.0, 0.5, "E1", 5.0),
+    ])
+    agent = ScientistAgent(lab, knowledge)
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    knowledge.evidence_for_model("model X")
+
+    assert calls == []
+
+
+def test_step9_j_no_belief_change(tmp_path):
+    """TEST J: summarizing never touches the AI's self-model (beliefs)."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _commit_and_verify(knowledge, "model X", [
+        ("linear", 5.0, 0.5, "E1", 5.0),
+    ])
+    state = ScientistState(("gravity",), knowledge)
+    span_before = state.belief("gravity").span
+
+    knowledge.evidence_for_model("model X")
+
+    assert state.belief("gravity").span == span_before
+
+
+def test_step9_k_no_truth_leakage():
+    """TEST K: the independent-evidence logic lives in universe-free modules —
+    no truth vocabulary, no universe import."""
+    knowledge_module = sys.modules["pymo.scientist.knowledge"]
+    for module in (prediction_module, knowledge_module):
+        src = Path(module.__file__).read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not alias.name.startswith("pymo.universes")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith("pymo.universes")
+    prediction_src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    assert "secrets" not in prediction_src and "y_true" not in prediction_src
+
+
+def test_step9_combined_history_counts_everything(tmp_path):
+    """The full distinction in one history: duplicate pairs, same-prediction
+    multi-experiment, multi-prediction same-experiment, and clean pairs all
+    coexist, and each independent count reflects only the non-redundant set."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    # P1 -> E1 (confirmed) verified TWICE (one duplicate)
+    p1, _ = _commit_and_verify(knowledge, "model X", [
+        ("linear", 5.0, 0.5, "E1", 5.0),
+    ])
+    _duplicate_verify(knowledge, "model X", p1[0], "E1", 5.0, "confirmed")
+    # P1 -> E2 (confirmed): same prediction, new experiment
+    _duplicate_verify(knowledge, "model X", p1[0], "E2", 5.0, "confirmed")
+    # P2 -> E1 (refuted): new prediction, same experiment as P1
+    p2, _ = _commit_and_verify(knowledge, "model X", [
+        ("quadratic", 9.0, 0.5, "E1", 8.0),
+    ])
+    # P3 -> E3 (confirmed): clean pair
+    p3, _ = _commit_and_verify(knowledge, "model X", [
+        ("linear", 7.0, 0.5, "E3", 7.0),
+    ])
+
+    summary = knowledge.evidence_for_model("model X")
+
+    assert summary.verification_count == 5              # 5 persisted records
+    assert summary.independent_prediction_count == 3    # P1, P2, P3
+    assert summary.independent_experiment_count == 3    # E1, E2, E3
+    # distinct pairs: (P1,E1) (P1,E2) (P2,E1) (P3,E3) = 4
+    assert summary.independent_evidence_count == 4
+    assert len(summary.independent_evidence) == 4
+    pairs = {(v.prediction_id, v.experiment_id)
+             for v in summary.independent_evidence}
+    assert pairs == {(p1[0].prediction_id, "E1"),
+                     (p1[0].prediction_id, "E2"),
+                     (p2[0].prediction_id, "E1"),
+                     (p3[0].prediction_id, "E3")}
+    # the duplicate (P1,E1) collapses to a single representative
+    assert len([v for v in summary.independent_evidence
+                if v.prediction_id == p1[0].prediction_id
+                and v.experiment_id == "E1"]) == 1

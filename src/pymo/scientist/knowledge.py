@@ -256,6 +256,14 @@ class KnowledgeBase:
         knowable model and is skipped explicitly; it never lands in any
         model's summary.
 
+        The summary separates the RAW verification count from the three
+        INDEPENDENT counts. Independent evidence is defined as a distinct
+        ``(prediction_id, experiment_id)`` pair: re-verifying the same
+        prediction against the same experiment adds no independent evidence,
+        while a distinct prediction OR a distinct experiment does.
+        ``independent_evidence`` holds one representative record per distinct
+        pair (the first, in verification-id order).
+
         Pure read: no record is created, edited or deleted, the knowledge
         base is not saved, and the Laboratory is never consulted. The result
         is fully deterministic — repeated queries return identical summaries.
@@ -270,18 +278,30 @@ class KnowledgeBase:
                 continue                       # orphaned: skip, never guess
             if owner == model_ref:
                 matched.append(verification)
+        # Independent evidence: distinct (prediction, experiment) pairs. The
+        # first occurrence (lowest verification id) of each pair is kept.
+        seen_pairs: set[tuple[str, str]] = set()
+        independent: list[VerificationRecord] = []
+        for verification in matched:
+            pair = (verification.prediction_id, verification.experiment_id)
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                independent.append(verification)
         statuses = [v.status for v in matched]
         return EvidenceSummary(
             model_ref=model_ref,
             prediction_ids=tuple(sorted({v.prediction_id for v in matched})),
             experiment_ids=tuple(sorted({v.experiment_id for v in matched})),
-            independent_experiments=len({v.experiment_id for v in matched}),
+            independent_prediction_count=len({v.prediction_id for v in matched}),
+            independent_experiment_count=len({v.experiment_id for v in matched}),
+            independent_evidence_count=len(independent),
             verification_count=len(matched),
             confirmed_count=statuses.count("confirmed"),
             refuted_count=statuses.count("refuted"),
             residuals=tuple(v.residual for v in matched),
             statuses=tuple(statuses),
             evidence=tuple(matched),
+            independent_evidence=tuple(independent),
         )
 
     def summary(self) -> str:
