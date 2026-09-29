@@ -47,8 +47,9 @@ class Verification:
     stable: bool
 
 
-def fit_free_fall(record: ObservationRecord) -> tuple[object, Hypothesis]:
-    """Fit ``z(t) = c + b*t + a*t^2`` to one drop record and derive gravity.
+def _fit_free_fall(t, z) -> tuple[object, float]:
+    """Single free-fall implementation: fit ``z(t) = c + b*t + a*t^2``
+    over the given samples and derive ``g = -2a``.
 
     Derivation path: with polynomial backends the native coefficients give
     ``g = -2 * coeffs[2]`` exactly; any other backend is interrogated as a
@@ -56,18 +57,35 @@ def fit_free_fall(record: ObservationRecord) -> tuple[object, Hypothesis]:
     exact for quadratics).
     """
     law = LawDiscovery(PolynomialBackend(degree=2)).discover_from_observation(
-        record.t, record.z)
+        t, z)
 
     if law.coeffs is not None and len(law.coeffs) >= 3:
         g = -2.0 * float(law.coeffs[2])
     else:
-        t0 = 0.5 * (float(record.t[0]) + float(record.t[-1]))
-        h = max(1e-3, 0.01 * (float(record.t[-1]) - float(record.t[0])))
+        t0 = 0.5 * (float(t[0]) + float(t[-1]))
+        h = max(1e-3, 0.01 * (float(t[-1]) - float(t[0])))
 
         def _f(tt: float) -> float:
             return float(np.asarray(law.predict(np.array([tt]))).ravel()[0])
 
         g = -((_f(t0 + h) - 2.0 * _f(t0) + _f(t0 - h)) / (h * h))
+    return law, g
+
+
+def free_fall_g_value(t, z) -> float:
+    """The gravity scalar implied by the free-fall fit of (t, z) samples.
+
+    The single implementation behind BOTH consumers of the free-fall
+    reduction: :func:`fit_free_fall` (the Hypothesis view) and the
+    ``free_fall_g`` observation-reduction rule (the declared verification
+    contract) — identical inputs therefore yield a bit-identical scalar.
+    """
+    return _fit_free_fall(t, z)[1]
+
+
+def fit_free_fall(record: ObservationRecord) -> tuple[object, Hypothesis]:
+    """Fit ``z(t) = c + b*t + a*t^2`` to one drop record and derive gravity."""
+    law, g = _fit_free_fall(record.t, record.z)
 
     hypothesis = Hypothesis(
         claim="gravity",

@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pytest
 
 from pwarm.scientist import (
+    ComparisonInput,
     CompetitionState,
     ConditionBinding,
     ConditionComparison,
@@ -42,14 +43,30 @@ from pwarm.scientist import (
     ScientistState,
     comparison_input,
     disagreement,
+    fit_free_fall,
     model_prediction,
     rank_discriminating_conditions,
     verify_prediction,
 )
+from pwarm.scientist import adjudication as adjudication_module
 from pwarm.scientist import agent as agent_module
+from pwarm.scientist import contracts as contracts_module
+from pwarm.scientist import models as models_module
 from pwarm.scientist import prediction as prediction_module
+from pwarm.scientist import records as records_module
 from pwarm.scientist import state as state_module
 from pwarm.scientist.agent import proposal_to_spec
+
+# Every module carrying Genesis adjudication logic (P2-9 split the facade
+# into four implementations). The truth-free scans below must cover where
+# the code actually lives, not just the re-export facade.
+GENESIS_MODULES = (prediction_module, models_module, contracts_module,
+                   records_module, adjudication_module)
+
+
+def _genesis_sources() -> list[str]:
+    return [Path(m.__file__).read_text(encoding="utf-8")
+            for m in GENESIS_MODULES]
 from pwarm.scientist.prediction import (
     Prediction,
     PredictionOutcome,
@@ -118,7 +135,8 @@ def test_b_tampered_commitment_hash_mismatch(lab, tmp_path):
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
     committed = knowledge.commit_prediction(
         model_ref="innate prior", claim="gravity", spec_ref=DROP_10M.id,
-        value=9.81, tolerance=0.1)
+        value=9.81, tolerance=0.1,
+        reduction_channel="z", reduction_rule="free_fall_g")
     assert verify_commitment(committed)
 
     tampered = replace(committed, predicted=9.9)   # silent edit attempt
@@ -140,7 +158,8 @@ def test_c_verification_uses_only_prediction_and_record(lab, tmp_path):
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
     committed = knowledge.commit_prediction(
         model_ref="innate prior", claim="gravity", spec_ref=DROP_10M.id,
-        value=9.81, tolerance=0.1)
+        value=9.81, tolerance=0.1,
+        reduction_channel="z", reduction_rule="free_fall_g")
     record = lab.run_experiment(DROP_10M)
 
     outcome = adjudicate(committed, record)     # inputs: exactly these two
@@ -155,7 +174,7 @@ def test_c_verification_uses_only_prediction_and_record(lab, tmp_path):
 def test_d_truth_unreachable_from_prediction_and_state():
     """TEST D: the prediction AND the belief-update code never import the
     universe layer — the whole feedback loop stays inside the AI side."""
-    for module in (prediction_module, state_module):
+    for module in (*GENESIS_MODULES, state_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
@@ -163,7 +182,7 @@ def test_d_truth_unreachable_from_prediction_and_state():
                     assert not alias.name.startswith("pwarm.universes")
             elif isinstance(node, ast.ImportFrom) and node.module:
                 assert not node.module.startswith("pwarm.universes")
-    prediction_src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    prediction_src = "\n".join(_genesis_sources())
     assert "secrets" not in prediction_src and "y_true" not in prediction_src
     # and the adjudication channel is two objects wide — nothing else fits
     params = list(inspect.signature(adjudicate).parameters)
@@ -317,7 +336,7 @@ def test_prediction_record_schema_unchanged():
         "prediction_id", "model_ref", "claim", "spec_ref", "predicted",
         "tolerance", "condition_binding", "output_binding", "output",
         "reduction_channel", "reduction_rule", "committed_hash", "seq",
-        "created_at", "status"]
+        "created_at", "status", "supersedes"]
 
 
 def test_verification_updates_belief_in_mission_loop(lab, tmp_path):
@@ -487,7 +506,7 @@ def test_consecutive_refuted_no_recovery(tmp_path):
 
 def test_consecutive_updates_no_universe_access(tmp_path):
     """TEST E: 连续学习过程中 prediction.py / state.py 不访问 pwarm.universes。"""
-    for mod in (state_module, prediction_module):
+    for mod in (*GENESIS_MODULES, state_module):
         src = Path(mod.__file__).read_text(encoding="utf-8")
         tree = ast.parse(src)
         for node in ast.walk(tree):
@@ -628,7 +647,7 @@ def test_existing_prediction_flow_unchanged():
         "prediction_id", "model_ref", "claim", "spec_ref", "predicted",
         "tolerance", "condition_binding", "output_binding", "output",
         "reduction_channel", "reduction_rule", "committed_hash", "seq",
-        "created_at", "status"]
+        "created_at", "status", "supersedes"]
     # prediction_from_belief still works
     with tempfile.TemporaryDirectory() as tmp:
         knowledge = KnowledgeBase(pathlib.Path(tmp) / "k.json",
@@ -1031,7 +1050,7 @@ def test_binding_channel_is_truth_free():
     """TEST F: the binding carries only declared names, and the AI-side
     modules it lives in stay universe-free."""
     assert _BINDING.mapping == {"x": "drop_height"}
-    for module in (prediction_module, agent_module):
+    for module in (*GENESIS_MODULES, agent_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
@@ -1107,7 +1126,7 @@ def test_comparison_input_channel_is_truth_free():
     """TEST G: the binding carries only declared names, and prediction.py
     (its home) stays universe-free."""
     assert _Y_TO_Z.mapping == {"y": "z"}
-    src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    src = "\n".join(_genesis_sources())
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -1238,7 +1257,7 @@ def test_reduction_channel_is_truth_free():
     """TEST H: the reduction carries only declared names, and its home
     module stays universe-free."""
     assert _REDUCTION.channel == "z" and _REDUCTION.rule == "first"
-    src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    src = "\n".join(_genesis_sources())
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -1361,7 +1380,7 @@ def test_verification_modifies_neither_prediction_nor_record(lab):
 def test_verification_channel_is_truth_free():
     """TEST I: the verdict consumes only (prediction, observed) — its
     home module stays universe-free."""
-    src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    src = "\n".join(_genesis_sources())
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -1559,7 +1578,7 @@ def test_commitment_phase_writes_only_commitments(lab, tmp_path):
 def test_commitment_channel_is_truth_free():
     """TESTS L+M: the commitment path's home modules stay universe-free."""
     knowledge_module = sys.modules["pwarm.scientist.knowledge"]
-    for module in (prediction_module, agent_module, knowledge_module):
+    for module in (*GENESIS_MODULES, agent_module, knowledge_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
@@ -1813,7 +1832,7 @@ def test_reverification_appends_no_aggregation(lab, tmp_path):
 def test_competition_verification_channel_is_truth_free():
     """TEST N: the verification path's home modules stay universe-free."""
     knowledge_module = sys.modules["pwarm.scientist.knowledge"]
-    for module in (prediction_module, agent_module, knowledge_module):
+    for module in (*GENESIS_MODULES, agent_module, knowledge_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
@@ -2102,7 +2121,7 @@ def test_m_evidence_summary_channel_is_truth_free():
     scoped to prediction.py, where EvidenceSummary lives; knowledge.py's
     docstring legitimately mentions "secrets" as a boundary concept.)"""
     knowledge_module = sys.modules["pwarm.scientist.knowledge"]
-    for module in (prediction_module, knowledge_module):
+    for module in (*GENESIS_MODULES, knowledge_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
@@ -2110,7 +2129,7 @@ def test_m_evidence_summary_channel_is_truth_free():
                     assert not alias.name.startswith("pwarm.universes")
             elif isinstance(node, ast.ImportFrom) and node.module:
                 assert not node.module.startswith("pwarm.universes")
-    prediction_src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    prediction_src = "\n".join(_genesis_sources())
     assert "secrets" not in prediction_src and "y_true" not in prediction_src
 
 
@@ -2353,7 +2372,7 @@ def test_step9_k_no_truth_leakage():
     """TEST K: the independent-evidence logic lives in universe-free modules —
     no truth vocabulary, no universe import."""
     knowledge_module = sys.modules["pwarm.scientist.knowledge"]
-    for module in (prediction_module, knowledge_module):
+    for module in (*GENESIS_MODULES, knowledge_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
@@ -2361,7 +2380,7 @@ def test_step9_k_no_truth_leakage():
                     assert not alias.name.startswith("pwarm.universes")
             elif isinstance(node, ast.ImportFrom) and node.module:
                 assert not node.module.startswith("pwarm.universes")
-    prediction_src = Path(prediction_module.__file__).read_text(encoding="utf-8")
+    prediction_src = "\n".join(_genesis_sources())
     assert "secrets" not in prediction_src and "y_true" not in prediction_src
 
 
@@ -2529,12 +2548,13 @@ def test_conflicting_predictions_reported_not_guessed(tmp_path):
 
 def test_state_fields_are_facts_not_scores(tmp_path):
     """TEST F: the state carries exactly the fact fields — no winner, no
-    weight, no probability, no elimination, no score of any kind."""
+    weight, no probability, no elimination, no score of any kind. (P2-8
+    adds last_verification_at — a timestamp fact, still not a score.)"""
     _step10_scenario(tmp_path)
     assert [f.name for f in dataclasses.fields(CompetitionState)] == [
         "model_ref", "experiment_ids", "independent_experiment_count",
         "confirmed_count", "refuted_count", "conflicts",
-        "provenance", "verifications"]
+        "provenance", "verifications", "last_verification_at"]
 
 
 def test_state_is_deterministic(tmp_path):
@@ -2585,7 +2605,7 @@ def test_state_query_leaves_belief_unchanged(tmp_path):
 def test_state_channel_is_truth_free():
     """TEST K: the state's home modules stay universe-free."""
     knowledge_module = sys.modules["pwarm.scientist.knowledge"]
-    for module in (prediction_module, knowledge_module):
+    for module in (*GENESIS_MODULES, knowledge_module):
         src = Path(module.__file__).read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Import):
@@ -2680,7 +2700,9 @@ def test_identity_holds_on_belief_verification_path(lab, tmp_path):
     specs = [ExperimentSpec(kind="drop", drop_height=5.0)]
     guesses = [Prediction(claim="gravity", value=9.8, tolerance=0.5,
                           source="state belief (unknown)")]
-    committed = agent.commit_predictions(guesses, specs)
+    committed = agent.commit_predictions(guesses, specs,
+                                         reduction_channel="z",
+                                         reduction_rule="free_fall_g")
     assert committed[0].spec_ref == "drop_h5_m1"
 
     matching = lab.run_experiment(ExperimentSpec(kind="drop", drop_height=5.0))
@@ -3084,18 +3106,21 @@ def test_v2_era_prediction_is_refused_not_reinterpreted(tmp_path):
     assert loaded.verifications == {}              # nothing was written
 
 
-def test_belief_path_still_adjudicates_contract_free(lab, tmp_path):
-    """The legacy belief path is untouched: contract-less commitments hash
-    and adjudicate through the free-fall fit exactly as before."""
+def test_belief_path_declares_only_its_reduction_contract(lab, tmp_path):
+    """The legacy belief path's commitment is self-describing too (P2-7):
+    it declares the free-fall reduction contract but no bindings, and it
+    adjudicates through the same single verdict rule as before."""
     agent = _agent(lab, tmp_path)
     report = agent.run_mission(MISSION)
 
     assert report.status == "DISCOVERED"
     committed = agent.last_committed_predictions[0]
-    assert committed.condition_binding == {}       # no contract declared
-    assert committed.output_binding == {}
-    assert verify_commitment(committed)            # empty contract hashed in
-    assert committed.status == "confirmed"         # legacy fit adjudication
+    assert committed.condition_binding == {}       # no condition binding
+    assert committed.output_binding == {}          # no output binding
+    assert committed.reduction_channel == "z"      # the declared reduction
+    assert committed.reduction_rule == "free_fall_g"
+    assert verify_commitment(committed)            # contract hashed in
+    assert committed.status == "confirmed"         # same verdict as always
 
 
 # -- Genesis P1-5: tolerance is declared, never defaulted ----------------------
@@ -3154,3 +3179,281 @@ def test_declared_tolerances_are_the_only_source(lab, tmp_path):
     assert {r.claim: r.tolerance for r in records} == {
         "linear": 0.02, "quadratic": 1.0}
     assert all(verify_commitment(r) for r in records)
+
+
+# -- Genesis P2-6: SUPERSEDED status + changed-mind linkage --------------------
+#
+# A changed mind is provenance, not an edit: the OLD open commitment's
+# status becomes "superseded" and the NEW record's supersedes field points
+# back at it. Only OPEN commitments can be superseded (verdicts are
+# immutable history); a superseded commitment can never be verified; and
+# since it carries no verifications, evidence and competition state are
+# unaffected.
+
+def test_supersede_links_old_open_to_new(tmp_path):
+    """Superseding an open commitment: old -> superseded, new.supersedes
+    points back, and BOTH records still hash-verify (no content edit)."""
+    knowledge = _identity_knowledge(tmp_path)
+    old = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    new = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=6.0, tolerance=0.5)
+
+    superseded, replacement = knowledge.supersede(
+        old.prediction_id, new.prediction_id)
+
+    assert superseded.status == "superseded"
+    assert replacement.supersedes == old.prediction_id
+    assert verify_commitment(superseded) and verify_commitment(replacement)
+
+    reloaded = KnowledgeBase(knowledge.path, universe="universe_001")
+    assert reloaded.prediction(old.prediction_id).status == "superseded"
+    assert reloaded.prediction(new.prediction_id).supersedes \
+        == old.prediction_id
+
+
+def test_supersede_refused_for_verdicts_and_edges(tmp_path):
+    """Only OPEN commitments can be superseded; verdicts are immutable
+    history; self-supersede and unknown ids are refused; a replacement
+    already pointing elsewhere is refused."""
+    knowledge = _identity_knowledge(tmp_path)
+    confirmed = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    _verify_with(knowledge, confirmed, "E1", 5.0, "confirmed")
+    refuted = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    _verify_with(knowledge, refuted, "E1", 9.0, "refuted")
+    fresh = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=7.0, tolerance=0.5)
+    other = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=8.0, tolerance=0.5)
+
+    with pytest.raises(ValueError, match="immutable history|only an open"):
+        knowledge.supersede(confirmed.prediction_id, fresh.prediction_id)
+    with pytest.raises(ValueError, match="immutable history|only an open"):
+        knowledge.supersede(refuted.prediction_id, fresh.prediction_id)
+    with pytest.raises(ValueError, match="cannot supersede itself"):
+        knowledge.supersede(fresh.prediction_id, fresh.prediction_id)
+    with pytest.raises(ValueError, match="unknown prediction"):
+        knowledge.supersede("pred-9999", fresh.prediction_id)
+    with pytest.raises(ValueError, match="unknown prediction"):
+        knowledge.supersede(fresh.prediction_id, "pred-9999")
+
+    knowledge.supersede(fresh.prediction_id, other.prediction_id)
+    # `other` now carries supersedes=fresh_id, so it cannot become the NEW
+    # record of another supersede even though it is still open
+    fourth = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=9.0, tolerance=0.5)
+    with pytest.raises(ValueError, match="already supersedes"):
+        knowledge.supersede(fourth.prediction_id, other.prediction_id)
+
+    assert knowledge.prediction(confirmed.prediction_id).status == "confirmed"
+    assert knowledge.prediction(refuted.prediction_id).status == "refuted"
+
+
+def test_superseded_commitment_cannot_be_verified(tmp_path):
+    """The verification gate refuses a superseded commitment — withdrawn
+    means it will never be tested — and nothing is written."""
+    knowledge = _identity_knowledge(tmp_path)
+    old = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    new = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=6.0, tolerance=0.5)
+    knowledge.supersede(old.prediction_id, new.prediction_id)
+    outcome = PredictionOutcome(claim="linear", predicted=5.0, observed=5.0,
+                                residual=0.0, status="confirmed")
+
+    with pytest.raises(ValueError, match="superseded"):
+        knowledge.record_verification(old.prediction_id, "E1", outcome)
+
+    assert knowledge.verifications == {}
+    assert knowledge.prediction(old.prediction_id).status == "superseded"
+
+
+def test_superseded_leaves_evidence_and_competition_untouched(tmp_path):
+    """A superseded commitment carries no verifications, so the model's
+    EvidenceSummary and CompetitionState are exactly what they would be
+    without it — withdrawal adds no evidence and no experiments."""
+    knowledge = _identity_knowledge(tmp_path)
+    withdrawn = knowledge.commit_prediction(
+        model_ref="model X", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+    knowledge.supersede(
+        withdrawn.prediction_id,
+        knowledge.commit_prediction(
+            model_ref="model X", claim="linear", spec_ref="E1",
+            value=6.0, tolerance=0.5).prediction_id)
+
+    summary = knowledge.evidence_for_model("model X")
+    assert summary.verification_count == 0
+    assert summary.independent_evidence_count == 0
+    assert withdrawn.prediction_id not in summary.prediction_ids
+    state = knowledge.competition_state("model X")
+    assert state.experiment_ids == ()
+    assert state.independent_experiment_count == 0
+
+
+# -- Genesis P2-7: one adjudication semantics for BOTH paths -------------------
+#
+# The legacy path's reduction is no longer hidden code inside evaluate(): it
+# is the declared "free_fall_g" rule in the same registry as "first", it is
+# committed INTO the belief path's contracts, and the coherence guard
+# (non-gravity claims refused) lives with the RULE itself — so it applies on
+# every path that uses the rule. Adjudicate honors the commitment's declared
+# reduction: empty contracts and mis-declared ones are refused loudly, never
+# re-interpreted. The verdict rule stays verify_prediction's single rule.
+
+def test_free_fall_g_reduction_matches_the_fit_bit_for_bit(lab):
+    """The declared rule produces EXACTLY the free-fall fit's g — one
+    implementation, two consumers (Hypothesis view and reduction rule)."""
+    record = lab.run_experiment(ExperimentSpec(kind="drop", drop_height=10.0))
+    _, hypothesis = fit_free_fall(record)
+
+    channels = {"t": tuple(float(v) for v in record.t),
+                "z": tuple(float(v) for v in record.z)}
+    comparison = ComparisonInput(
+        prediction=Prediction(claim="gravity", value=9.81, tolerance=0.1),
+        field="z", observed=channels["z"], channels=channels)
+    reduced = ObservationReduction(channel="z", rule="free_fall_g") \
+        .reduce(comparison)
+
+    assert reduced == hypothesis.value
+
+
+def test_free_fall_g_refuses_non_gravity_claims():
+    """The coherence guard lives with the rule: a non-gravity prediction is
+    refused by the reduction itself — on EVERY path that uses it."""
+    comparison = ComparisonInput(
+        prediction=Prediction(claim="friction", value=0.4, tolerance=0.1),
+        field="z", observed=(1.0, 2.0),
+        channels={"t": (0.0, 0.1), "z": (1.0, 2.0)})
+    with pytest.raises(ValueError, match="derives a gravity scalar"):
+        ObservationReduction(channel="z", rule="free_fall_g").reduce(comparison)
+
+
+def test_free_fall_g_refuses_short_or_channelless_records():
+    """The rule refuses records without t/z channels or too few samples."""
+    comparison = ComparisonInput(
+        prediction=Prediction(claim="gravity", value=9.81, tolerance=0.1),
+        field="z", observed=(1.0, 2.0), channels={"z": (1.0, 2.0)})
+    with pytest.raises(ValueError, match="needs the record's t and z"):
+        ObservationReduction(channel="z", rule="free_fall_g").reduce(comparison)
+
+    short_t = tuple(float(i) for i in range(4))
+    comparison = ComparisonInput(
+        prediction=Prediction(claim="gravity", value=9.81, tolerance=0.1),
+        field="z", observed=short_t,
+        channels={"t": short_t, "z": short_t})
+    with pytest.raises(ValueError, match="too short"):
+        ObservationReduction(channel="z", rule="free_fall_g").reduce(comparison)
+
+
+def test_first_rule_unchanged_by_the_registry_generalization(lab):
+    """The competition path's 'first' rule behaves exactly as before."""
+    record = lab.run_experiment(ExperimentSpec(kind="drop", drop_height=5.0))
+    comparison = ComparisonInput(
+        prediction=Prediction(claim="linear", value=5.0, tolerance=0.01),
+        field="z", observed=tuple(float(v) for v in record.z),
+        channels={"t": tuple(float(v) for v in record.t),
+                  "z": tuple(float(v) for v in record.z)})
+    assert ObservationReduction(channel="z", rule="first").reduce(comparison) \
+        == pytest.approx(4.997275, abs=1e-6)
+
+
+def test_adjudicate_refuses_empty_contract(lab, tmp_path):
+    """A commitment without a declared reduction is refused — a commitment
+    is never re-interpreted under an implicit contract."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    committed = knowledge.commit_prediction(
+        model_ref="innate prior", claim="gravity", spec_ref=DROP_10M.id,
+        value=9.81, tolerance=0.1)          # no contract declared
+    record = lab.run_experiment(DROP_10M)
+
+    with pytest.raises(ValueError, match="without a verification contract"):
+        adjudicate(committed, record)
+
+
+def test_adjudicate_refuses_mis_declared_contracts(lab, tmp_path):
+    """Only the legacy (z, free_fall_g) contract is implemented here: other
+    declared reductions are refused loudly, not silently executed."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    record = lab.run_experiment(DROP_10M)
+    for channel, rule in (("z", "first"), ("t", "free_fall_g")):
+        committed = knowledge.commit_prediction(
+            model_ref="innate prior", claim="gravity", spec_ref=DROP_10M.id,
+            value=9.81, tolerance=0.1,
+            reduction_channel=channel, reduction_rule=rule)
+        with pytest.raises(ValueError, match="declares the reduction"):
+            adjudicate(committed, record)
+
+
+def test_both_paths_share_the_single_verdict_rule(lab, tmp_path):
+    """Semantic consistency, not surface naming: the SAME record and the
+    SAME predicted value produce the SAME residual/status/observed whether
+    the commitment is adjudicated through the legacy path (free_fall_g
+    rule via adjudicate) or the competition machinery (comparison_input ->
+    declared reduction -> verify_prediction)."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    record = lab.run_experiment(DROP_10M)
+    prediction = Prediction(claim="gravity", value=9.81, tolerance=0.1,
+                            source="model X")
+
+    legacy = knowledge.commit_prediction(
+        model_ref="model X", claim="gravity", spec_ref=DROP_10M.id,
+        value=9.81, tolerance=0.1,
+        reduction_channel="z", reduction_rule="free_fall_g")
+    via_adjudicate = adjudicate(legacy, record)
+
+    aligned = comparison_input(prediction, record, OutputBinding({"y": "z"}),
+                               output="y")
+    via_rule = verify_prediction(
+        prediction, ObservationReduction(channel="z",
+                                         rule="free_fall_g").reduce(aligned))
+
+    assert via_adjudicate.residual == pytest.approx(via_rule.residual, abs=0.0)
+    assert via_adjudicate.status == via_rule.status == "confirmed"
+    assert via_adjudicate.observed == pytest.approx(via_rule.observed, abs=0.0)
+
+
+# -- Genesis P2-8: CompetitionState carries a minimal temporal fact ------------
+#
+# last_verification_at is the newest created_at among the model's
+# verifications — a pure derivation over persisted records, no new writes.
+# "" when the model has no (timestamped) verifications.
+
+def test_competition_state_carries_last_verification_at(tmp_path):
+    knowledge = _identity_knowledge(tmp_path)
+    _commit_and_verify(knowledge, "model T", [
+        ("linear", 5.0, 0.5, "E1", 5.0),
+        ("quadratic", 9.0, 0.5, "E2", 8.0),
+    ])
+
+    state = knowledge.competition_state("model T")
+
+    assert state.last_verification_at
+    assert state.last_verification_at == max(
+        v.created_at for v in state.verifications)
+    # the newest verification's own timestamp, byte-identical
+    newest = max(state.verifications, key=lambda v: v.created_at)
+    assert state.last_verification_at == newest.created_at
+
+
+def test_competition_state_empty_has_no_timestamp(tmp_path):
+    knowledge = _identity_knowledge(tmp_path)
+    knowledge.commit_prediction(
+        model_ref="model E", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5)
+
+    state = knowledge.competition_state("model E")
+
+    assert state.verifications == ()
+    assert state.last_verification_at == ""

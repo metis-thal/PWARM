@@ -420,10 +420,14 @@ class ScientistAgent:
 
         # Genesis Phase 1: predict, then COMMIT (hash + persist) BEFORE any
         # experiment executes — the result must not be available when the
-        # prediction is formed.
+        # prediction is formed. The legacy path declares its verification
+        # contract too: the record's free-fall reduction (P2-7), so BOTH
+        # paths' commitments are self-describing.
         guesses = self.form_prediction(mission, state)
         self.last_predictions = list(guesses)
-        committed = self.commit_predictions(guesses, specs)
+        committed = self.commit_predictions(guesses, specs,
+                                            reduction_channel="z",
+                                            reduction_rule="free_fall_g")
         self.last_committed_predictions = list(committed)
 
         # 1-2. propose + execute (physics runs the world; AI only observes)

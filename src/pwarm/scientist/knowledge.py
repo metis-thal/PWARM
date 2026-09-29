@@ -128,6 +128,7 @@ class KnowledgeBase:
                 seq=int(rec.get("seq", 0)),
                 created_at=rec.get("created_at", ""),
                 status=rec.get("status", "open"),
+                supersedes=rec.get("supersedes", ""),
             )
             for rec in data.get("predictions", [])
         }
@@ -212,7 +213,8 @@ class KnowledgeBase:
                           output_binding: dict[str, str] | None = None,
                           output: str = "",
                           reduction_channel: str = "",
-                          reduction_rule: str = "") -> PredictionRecord:
+                          reduction_rule: str = "",
+                          supersedes: str = "") -> PredictionRecord:
         """Hash and persist a commitment BEFORE the experiment runs.
 
         The record is append-only scientific history: the committed content
@@ -241,6 +243,7 @@ class KnowledgeBase:
             output=output,
             reduction_channel=reduction_channel,
             reduction_rule=reduction_rule,
+            supersedes=supersedes,
             seq=seq,
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
@@ -267,6 +270,9 @@ class KnowledgeBase:
                                                         append records, but
                                                         the status never
                                                         leaves refuted)
+            open --supersede()---------> superseded    (withdrawn: this gate
+                                                        refuses to verify it,
+                                                        ever)
 
         No other statuses or transitions exist at this layer. The committed
         content stays immutable and hash-checkable; a tampered record is
@@ -285,6 +291,10 @@ class KnowledgeBase:
             raise ValueError(
                 f"commitment hash mismatch for {prediction_id}: refusing to "
                 "verify a tampered prediction")
+        if prediction.status == "superseded":
+            raise ValueError(
+                f"prediction {prediction_id} was superseded — a withdrawn "
+                "commitment can never be verified")
         if experiment_id not in parse_spec_refs(prediction.spec_ref):
             raise ValueError(
                 f"experiment {experiment_id!r} is not covered by prediction "
@@ -309,6 +319,45 @@ class KnowledgeBase:
             self.predictions[prediction_id] = prediction
         self.save()
         return record
+
+    def supersede(self, old_id: str, new_id: str) -> tuple[PredictionRecord,
+                                                           PredictionRecord]:
+        """Withdraw an OPEN commitment in favor of a NEW prediction.
+
+        The changed-mind linkage, explicit: the old commitment's status
+        becomes ``superseded`` and the new record's ``supersedes`` points
+        back at it — provenance without editing either commitment's
+        hashed content (both records are replaced, never mutated in
+        place, and both still hash-verify).
+
+        Refused loudly when: either id is unknown, old and new are the
+        same prediction, the old commitment already carries a verdict
+        (confirmed/refuted are immutable history — a changed mind simply
+        commits a new prediction alongside), or the new prediction
+        already supersedes something else.
+        """
+        old = self.predictions.get(old_id)
+        if old is None:
+            raise ValueError(f"unknown prediction {old_id!r}")
+        new = self.predictions.get(new_id)
+        if new is None:
+            raise ValueError(f"unknown prediction {new_id!r}")
+        if old_id == new_id:
+            raise ValueError(f"prediction {old_id!r} cannot supersede itself")
+        if old.status != "open":
+            raise ValueError(
+                f"only an open commitment can be superseded; {old_id} is "
+                f"{old.status!r} — verdicts are immutable history")
+        if new.supersedes:
+            raise ValueError(
+                f"{new_id} already supersedes {new.supersedes!r} — commit "
+                "a fresh prediction instead")
+        old = replace(old, status="superseded")
+        new = replace(new, supersedes=old_id)
+        self.predictions[old_id] = old
+        self.predictions[new_id] = new
+        self.save()
+        return old, new
 
     def prediction(self, prediction_id: str) -> PredictionRecord | None:
         return self.predictions.get(prediction_id)

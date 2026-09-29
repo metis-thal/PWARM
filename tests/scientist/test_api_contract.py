@@ -21,6 +21,8 @@ AI_MODULES = [
     "agent.py", "designer.py", "state.py", "planner.py", "mission.py",
     "hypothesis.py", "prediction.py", "knowledge.py", "information.py",
     "uncertainty.py", "budget.py", "experiment_value.py", "instrument.py",
+    # prediction.py's split implementation modules (P2-9 facade)
+    "models.py", "contracts.py", "records.py", "adjudication.py",
 ]
 
 
