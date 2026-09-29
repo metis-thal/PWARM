@@ -12,13 +12,14 @@ it can only propose experiments and observe their results.
 
 from .agent import ScientistAgent
 from .budget import ExperimentBudget
+from .contracts import observation_fields, reduction_rules
 from .designer import ExperimentDesigner, ExperimentProposal
 from .experiment import ExperimentSession, ExperimentSpec, Laboratory, ObservationRecord
 from .experiments import REGISTRY
 from .hypothesis import Hypothesis, Verification, fit_free_fall, verify
 from .instrument import InstrumentCatalog, InstrumentGrant, InstrumentRequest, analyze_gap
 from .knowledge import KnowledgeBase, LawRecord
-from .knowledge_records import ModelRecord
+from .knowledge_records import DefinitionRecord, ModelRecord
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
 from .prediction import (
@@ -45,6 +46,7 @@ __all__ = [
     "CompetitionState",
     "ConditionBinding",
     "ConditionComparison",
+    "DefinitionRecord",
     "EvidenceSummary",
     "ExperimentBudget",
     "ExperimentDesigner",
@@ -75,7 +77,9 @@ __all__ = [
     "disagreement",
     "fit_free_fall",
     "model_prediction",
+    "observation_fields",
     "rank_discriminating_conditions",
+    "reduction_rules",
     "relative_width",
     "total_uncertainty",
     "verify",

@@ -19,7 +19,14 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .knowledge_records import ModelRecord, model_content_hash
+from .contracts import observation_fields, reduction_rules
+from .knowledge_records import (
+    DefinitionRecord,
+    ModelRecord,
+    definition_content_hash,
+    model_content_hash,
+    validate_concept_id,
+)
 from .prediction import (
     CompetitionState,
     EvidenceSummary,
@@ -35,13 +42,14 @@ from .prediction import (
     competition_state as build_competition_state,
 )
 
-# Schema 4: the Knowledge Layer's first entity — ModelRecord, an addressable
-# model identity whose declared content is frozen and hash-anchored. v3-era
-# files load unchanged (empty registry); predictions are untouched and their
-# stored model_ref strings are NEVER migrated or rewritten — derivations
-# keep matching them exactly as stored, so a registered model_id aggregates
-# precisely the predictions that reference it.
-SCHEMA_VERSION = 4
+# Schema 5: the Knowledge Layer's second entity — DefinitionRecord, the
+# operational definition of a concept (channel + reduction rule + unit).
+# v4-era files load unchanged (empty definition registry); predictions are
+# untouched and their stored model_ref strings are NEVER migrated or
+# rewritten — derivations keep matching them exactly as stored. Loading a
+# file written by a NEWER schema is refused (an older program re-saving it
+# would silently drop newer fields).
+SCHEMA_VERSION = 5
 
 
 def _next_ordinal(ids, prefix: str) -> int:
@@ -85,6 +93,7 @@ class KnowledgeBase:
         self.predictions: dict[str, PredictionRecord] = {}
         self.verifications: dict[str, VerificationRecord] = {}
         self.model_records: dict[str, ModelRecord] = {}
+        self.definitions: dict[str, DefinitionRecord] = {}
         self.load()
 
     @classmethod
@@ -98,9 +107,17 @@ class KnowledgeBase:
         if not self.path.exists():
             self.laws = {}
             self.model_records = {}
+            self.definitions = {}
             return
         with self.path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
+        stored_version = int(data.get("schema_version", 0))
+        if stored_version > SCHEMA_VERSION:
+            raise ValueError(
+                f"knowledge file {self.path} was written by schema "
+                f"v{stored_version}, newer than this program's "
+                f"v{SCHEMA_VERSION} — loading and re-saving would silently "
+                "drop newer fields; refusing")
         self.laws = {
             rec["name"]: LawRecord(
                 name=rec["name"],
@@ -162,6 +179,22 @@ class KnowledgeBase:
             )
             for rec in data.get("model_records", [])
         }
+        self.definitions = {
+            rec["definition_id"]: DefinitionRecord(
+                definition_id=rec["definition_id"],
+                concept_id=rec.get("concept_id", ""),
+                kind=rec.get("kind", "measurand"),
+                unit=rec.get("unit", ""),
+                channel=rec.get("channel", ""),
+                reduction_rule=rec.get("reduction_rule", ""),
+                description=rec.get("description", ""),
+                created_at=rec.get("created_at", ""),
+                status=rec.get("status", "active"),
+                supersedes=rec.get("supersedes", ""),
+                content_hash=rec.get("content_hash", ""),
+            )
+            for rec in data.get("definitions", [])
+        }
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +208,8 @@ class KnowledgeBase:
                               for rec in self.verifications.values()],
             "model_records": [asdict(rec)
                               for rec in self.model_records.values()],
+            "definitions": [asdict(rec)
+                            for rec in self.definitions.values()],
         }
         with self.path.open("w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2, ensure_ascii=False)
@@ -457,6 +492,125 @@ class KnowledgeBase:
     def model_record(self, model_id: str) -> ModelRecord | None:
         """The registered identity for model_id, or None when unknown."""
         return self.model_records.get(model_id)
+
+    # -- Knowledge Layer KL-2: operational concept definitions ----------------
+    #
+    # DefinitionRecords are vocabulary, not truth: the declared procedure
+    # (concept_id + channel + reduction_rule + unit) is frozen and
+    # hash-anchored; a revised procedure is a NEW record plus an atomic
+    # supersede (a concept has AT MOST ONE active definition — claim
+    # resolution must never be ambiguous). Definitions are referenced for
+    # LOOKUP only and can never become a source for VerificationRecords;
+    # they carry no standing, no counts, no verdict-shaped data.
+
+    def define_concept(self, concept_id: str, unit: str, channel: str,
+                       reduction_rule: str, description: str = "",
+                       kind: str = "measurand",
+                       supersedes: str = "") -> DefinitionRecord:
+        """Define a concept operationally, or revise it atomically.
+
+        First registration: ``supersedes`` empty — the concept must not
+        already have an active definition. Revision: ``supersedes`` names
+        the current definition of the SAME concept — it is closed
+        (status ``superseded``) and the new record becomes the single
+        active definition in one step, so claim resolution is never
+        ambiguous. Both the old and the new record still hash-verify.
+
+        Validated loudly against the declared vocabularies: concept_id
+        (lowercase snake_case), kind (v0: measurand), channel and
+        reduction_rule (contracts.py's registries), and a non-empty unit.
+        """
+        validate_concept_id(concept_id)
+        if kind != "measurand":
+            raise ValueError(
+                f"unsupported definition kind {kind!r}; v0 defines "
+                "measurands only")
+        if channel not in observation_fields():
+            raise ValueError(
+                f"channel {channel!r} is not an observation field; "
+                f"valid: {sorted(observation_fields())}")
+        if reduction_rule not in reduction_rules():
+            raise ValueError(
+                f"reduction rule {reduction_rule!r} is not declared; "
+                f"valid: {list(reduction_rules())}")
+        if not unit:
+            raise ValueError(
+                f"a measurand definition needs a unit (concept "
+                f"{concept_id!r})")
+        active = self.active_definition(concept_id)
+        if supersedes:
+            old = self.definitions.get(supersedes)
+            if old is None:
+                raise ValueError(f"unknown definition {supersedes!r}")
+            if old.status != "active":
+                raise ValueError(
+                    f"only an active definition can be superseded; "
+                    f"{supersedes} is {old.status!r}")
+            if old.concept_id != concept_id:
+                raise ValueError(
+                    f"cannot supersede {supersedes} (concept "
+                    f"{old.concept_id!r}) with a definition of "
+                    f"{concept_id!r}")
+        elif active is not None:
+            raise ValueError(
+                f"concept {concept_id!r} already has an active definition "
+                f"({active.definition_id}) — revise it with "
+                "supersedes=...")
+        record = DefinitionRecord(
+            definition_id=f"def-{_next_ordinal(self.definitions, 'def-'):04d}",
+            concept_id=concept_id,
+            kind=kind,
+            unit=unit,
+            channel=channel,
+            reduction_rule=reduction_rule,
+            description=description,
+            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            supersedes=supersedes,
+        )
+        record = replace(record, content_hash=definition_content_hash(record))
+        if supersedes:
+            self.definitions[supersedes] = replace(
+                self.definitions[supersedes], status="superseded")
+        self.definitions[record.definition_id] = record
+        self.save()
+        return record
+
+    def definition(self, definition_id: str) -> DefinitionRecord | None:
+        """The definition record for definition_id, or None when unknown."""
+        return self.definitions.get(definition_id)
+
+    def active_definition(self, concept_id: str) -> DefinitionRecord | None:
+        """The current operational definition of a concept, or None.
+
+        At most one exists — the atomic revision invariant keeps claim
+        resolution unambiguous.
+        """
+        for record in self.definitions.values():
+            if record.concept_id == concept_id and record.status == "active":
+                return record
+        return None
+
+    def definition_history(self, concept_id: str) -> tuple[DefinitionRecord, ...]:
+        """The concept's definition chain, newest first.
+
+        Definition ids are monotonic ordinals, so reverse id order IS the
+        revision order; the active definition (if any) leads the chain.
+        """
+        return tuple(sorted(
+            (record for record in self.definitions.values()
+             if record.concept_id == concept_id),
+            key=lambda record: record.definition_id, reverse=True))
+
+    def definitions_for_procedure(self, channel: str,
+                                  reduction_rule: str) -> tuple[DefinitionRecord, ...]:
+        """Active definitions whose operational procedure is (channel, rule)
+        — the contract-side resolution of a prediction's declared reduction.
+        """
+        return tuple(
+            record for record in self.definitions.values()
+            if record.status == "active"
+            and record.channel == channel
+            and record.reduction_rule == reduction_rule)
 
     def prediction(self, prediction_id: str) -> PredictionRecord | None:
         return self.predictions.get(prediction_id)

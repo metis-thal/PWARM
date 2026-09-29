@@ -57,7 +57,13 @@ from pwarm.scientist import prediction as prediction_module
 from pwarm.scientist import records as records_module
 from pwarm.scientist import state as state_module
 from pwarm.scientist.agent import proposal_to_spec
-from pwarm.scientist.knowledge_records import ModelRecord, verify_model_record
+from pwarm.scientist.knowledge import SCHEMA_VERSION
+from pwarm.scientist.knowledge_records import (
+    DefinitionRecord,
+    ModelRecord,
+    verify_definition_record,
+    verify_model_record,
+)
 
 # Every module carrying Genesis adjudication logic (P2-9 split the facade
 # into four implementations). The truth-free scans below must cover where
@@ -552,7 +558,7 @@ def test_pre_phase1_knowledge_files_remain_valid(tmp_path):
     knowledge.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 4   # v4: knowledge entities (ModelRecord)
+    assert data["schema_version"] == 5   # v5: + DefinitionRecord (KL-2)
     assert data["laws"][0]["name"] == "gravity"
     assert data["predictions"] == [] and data["verifications"] == []
 
@@ -3671,7 +3677,7 @@ def test_pre_kl1_model_refs_are_never_migrated_or_merged(tmp_path):
     reloaded.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 4
+    assert data["schema_version"] == 5
     assert data["predictions"][0]["model_ref"] == "model linear"  # untouched
 
     final = KnowledgeBase(path, universe="universe_001")
@@ -3680,3 +3686,263 @@ def test_pre_kl1_model_refs_are_never_migrated_or_merged(tmp_path):
     legacy = final.evidence_for_model("model linear")
     assert legacy.verification_count == 0     # still readable under its key
     assert final.predictions["pred-0001"].model_ref == "model linear"
+
+
+# -- Knowledge Layer KL-2: operational concept definitions ----------------------
+#
+# A DefinitionRecord is vocabulary, not truth: (channel, reduction_rule, unit)
+# IS the operational definition of a concept. It is referenced for LOOKUP
+# only, can never become a source for VerificationRecords, carries no
+# standing and no verdict-shaped data, and a concept has AT MOST ONE active
+# definition (atomic revision keeps claim resolution unambiguous).
+
+def test_gravity_definition_resolves_claim_and_procedure(tmp_path):
+    """The key compatibility proof: registering the operational definition
+    of gravity makes BOTH resolution paths meet at the same record —
+    active_definition("gravity") (claim side) and
+    definitions_for_procedure("z", "free_fall_g") (contract side), whose
+    pair is exactly LEGACY_REDUCTION."""
+    knowledge = _identity_knowledge(tmp_path)
+    record = knowledge.define_concept(
+        "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g",
+        description="the free-fall acceleration implied by the record")
+
+    by_claim = knowledge.active_definition("gravity")
+    by_procedure = knowledge.definitions_for_procedure("z", "free_fall_g")
+
+    assert by_claim is record
+    assert by_procedure == (record,)
+    assert by_claim.unit == "m/s^2"
+    assert record.definition_id.startswith("def-")
+    assert record.status == "active"
+
+
+def test_definition_freezes_and_round_trips(tmp_path):
+    """The declared procedure is hash-anchored and survives save/reload."""
+    knowledge = _identity_knowledge(tmp_path)
+    record = knowledge.define_concept(
+        "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g")
+
+    assert verify_definition_record(record)
+
+    reloaded = KnowledgeBase(knowledge.path, universe="universe_001")
+    stored = reloaded.definition(record.definition_id)
+    assert stored is not None
+    assert stored.concept_id == "gravity"
+    assert stored.channel == "z" and stored.reduction_rule == "free_fall_g"
+    assert stored.unit == "m/s^2"
+    assert verify_definition_record(stored)
+
+
+def test_definition_declared_content_tamper_detected(tmp_path):
+    """Editing any DECLARED field breaks the content hash; bookkeeping
+    edits do not."""
+    knowledge = _identity_knowledge(tmp_path)
+    record = knowledge.define_concept(
+        "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g")
+
+    assert not verify_definition_record(replace(record, unit="m/s"))
+    assert not verify_definition_record(replace(record, channel="t"))
+    assert not verify_definition_record(replace(record, reduction_rule="first"))
+    assert not verify_definition_record(replace(record, concept_id="weight"))
+    assert not verify_definition_record(replace(record, description="x"))
+    # bookkeeping is outside the hash
+    assert verify_definition_record(replace(record, status="superseded"))
+    assert verify_definition_record(replace(record, supersedes="def-0000"))
+
+
+def test_concept_id_and_vocabulary_validation(tmp_path):
+    """concept_id must be lowercase snake_case (identity integrity, KL-1
+    style); channel and rule must exist in contracts.py's declared
+    vocabularies; kind is measurand-only; unit is required."""
+    knowledge = _identity_knowledge(tmp_path)
+    for bad_id in ("Gravity", "gravity force!!!", "", "gravity-force"):
+        with pytest.raises(ValueError, match="concept identity"):
+            knowledge.define_concept(
+                bad_id, unit="m/s^2", channel="z", reduction_rule="free_fall_g")
+    with pytest.raises(ValueError, match="not an observation field"):
+        knowledge.define_concept(
+            "gravity", unit="m/s^2", channel="altitude",
+            reduction_rule="free_fall_g")
+    with pytest.raises(ValueError, match="not declared"):
+        knowledge.define_concept(
+            "gravity", unit="m/s^2", channel="z", reduction_rule="median")
+    with pytest.raises(ValueError, match="measurands only"):
+        knowledge.define_concept(
+            "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g",
+            kind="object-class")
+    with pytest.raises(ValueError, match="needs a unit"):
+        knowledge.define_concept(
+            "gravity", unit="", channel="z", reduction_rule="free_fall_g")
+
+    knowledge.define_concept(
+        "air_density", unit="kg/m^3", channel="z", reduction_rule="first")
+    assert knowledge.active_definition("air_density") is not None
+
+
+def test_definition_revision_is_atomic(tmp_path):
+    """A revised procedure closes the old definition and activates the new
+    in ONE step: the concept keeps exactly one active definition, history
+    stays readable newest-first, and both records hash-verify."""
+    knowledge = _identity_knowledge(tmp_path)
+    v1 = knowledge.define_concept(
+        "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g")
+    v2 = knowledge.define_concept(
+        "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g",
+        description="revised: same procedure, sharpened statement",
+        supersedes=v1.definition_id)
+
+    assert knowledge.definition(v1.definition_id).status == "superseded"
+    assert v2.status == "active"
+    assert v2.supersedes == v1.definition_id
+    assert v2.concept_id == "gravity"          # stable claim vocabulary
+    assert verify_definition_record(v1) and verify_definition_record(v2)
+
+    active = knowledge.active_definition("gravity")
+    assert active.definition_id == v2.definition_id   # never ambiguous
+    history = knowledge.definition_history("gravity")
+    assert [d.definition_id for d in history] \
+        == [v2.definition_id, v1.definition_id]
+
+
+def test_definition_revision_refusals(tmp_path):
+    """Revision validation: unknown target, non-active target, cross-concept
+    supersede, and duplicate active definition (without supersedes) are all
+    refused loudly."""
+    knowledge = _identity_knowledge(tmp_path)
+    gravity = knowledge.define_concept(
+        "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g")
+    weight = knowledge.define_concept(
+        "air_density", unit="kg/m^3", channel="z", reduction_rule="first")
+
+    with pytest.raises(ValueError, match="unknown definition"):
+        knowledge.define_concept(
+            "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g",
+            supersedes="def-9999")
+    with pytest.raises(ValueError, match="concept"):
+        knowledge.define_concept(
+            "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g",
+            supersedes=weight.definition_id)          # cross-concept
+    with pytest.raises(ValueError, match="already has an active definition"):
+        knowledge.define_concept(
+            "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g")
+
+    v2 = knowledge.define_concept(
+        "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g",
+        description="v2", supersedes=gravity.definition_id)
+    with pytest.raises(ValueError, match="only an active definition"):
+        knowledge.define_concept(
+            "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g",
+            description="v3", supersedes=gravity.definition_id)  # already closed
+    assert knowledge.active_definition("gravity").definition_id \
+        == v2.definition_id
+
+
+def test_definition_revision_leaves_verifications_unchanged(lab, tmp_path):
+    """The direction constraint: DefinitionRecord is lookup/vocabulary ONLY.
+    Revising a definition never rewrites history — the prediction's frozen
+    contract and the persisted verification (residual, status, evidence)
+    stay byte-identical."""
+    knowledge = _identity_knowledge(tmp_path)
+    record = lab.run_experiment(DROP_10M)
+    committed = knowledge.commit_prediction(
+        model_ref="innate prior", claim="gravity", spec_ref=DROP_10M.id,
+        value=9.81, tolerance=0.1,
+        reduction_channel="z", reduction_rule="free_fall_g")
+    knowledge.define_concept(
+        "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g")
+    verification = knowledge.record_verification(
+        committed.prediction_id, record.experiment_id, adjudicate(committed, record))
+    before = (verification.residual, verification.status, verification.evidence)
+
+    # revise the definition AFTER the verification exists
+    knowledge.define_concept(
+        "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g",
+        description="sharpened statement", supersedes="def-0001")
+
+    after = knowledge.verifications[verification.verification_id]
+    assert (after.residual, after.status, after.evidence) == before
+    assert committed.committed_hash == \
+        knowledge.prediction(committed.prediction_id).committed_hash
+    # the prediction's own contract is untouched by the revision
+    assert knowledge.prediction(committed.prediction_id).reduction_rule \
+        == "free_fall_g"
+
+
+def test_commit_without_registered_claim_still_works(lab, tmp_path):
+    """KL-2 adds vocabulary, not a gate: committing and verifying with a
+    claim that has no registered definition still works exactly as before
+    (the gate belongs to a later phase)."""
+    knowledge = _identity_knowledge(tmp_path)
+    agent = _agent(lab, tmp_path)
+    report = agent.run_mission(MISSION)          # no define_concept call
+
+    assert report.status == "DISCOVERED"
+    assert knowledge.active_definition("gravity") is None
+    assert agent.last_committed_predictions[0].status == "confirmed"
+
+
+def test_definition_record_schema_is_facts_not_scores():
+    """Field and status pins: declared vocabulary plus bookkeeping only —
+    no score, truth, confidence, winner or verification-shaped field can
+    ever appear; status is lifecycle-only."""
+    assert [f.name for f in dataclasses.fields(DefinitionRecord)] == [
+        "definition_id", "concept_id", "kind", "unit", "channel",
+        "reduction_rule", "description", "created_at", "status",
+        "supersedes", "content_hash"]
+    forbidden = {"score", "confidence", "accuracy", "winner", "rank",
+                 "weight", "probability", "quality", "truth", "verified",
+                 "observed", "residual", "standing"}
+    assert not any(f.name in forbidden
+                   for f in dataclasses.fields(DefinitionRecord))
+
+
+def test_v4_store_loads_and_upgrades_to_v5(tmp_path):
+    """v4-era files (model_records, no definitions key) load unchanged with
+    an empty definition registry; saving upgrades the layout without
+    touching laws or predictions."""
+    path = tmp_path / "v4_store.json"
+    knowledge = KnowledgeBase(path, universe="universe_001")
+    knowledge.register_model("linear", "y = k*x", {"k": 1.0})
+    knowledge.commit_prediction(
+        model_ref="linear", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5,
+        reduction_channel="z", reduction_rule="first")
+    knowledge.save()
+    # simulate a genuine v4-era file: no definitions key, version 4
+    v4_data = json.loads(path.read_text(encoding="utf-8"))
+    del v4_data["definitions"]
+    v4_data["schema_version"] = 4
+    path.write_text(json.dumps(v4_data), encoding="utf-8")
+    snapshot = path.read_text(encoding="utf-8")
+
+    reloaded = KnowledgeBase(path, universe="universe_001")
+    assert reloaded.definitions == {}
+    assert reloaded.model_record("linear") is not None
+    assert reloaded.predictions["pred-0001"].model_ref == "linear"
+    reloaded.define_concept(
+        "z_first", unit="m", channel="z", reduction_rule="first")
+    reloaded.save()
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 5
+    assert data["predictions"][0]["model_ref"] == "linear"
+    assert data["model_records"][0]["model_id"] == "linear"
+    assert data["definitions"][0]["concept_id"] == "z_first"
+    assert "definitions" not in json.loads(snapshot)   # v4 had no such key
+
+
+def test_loader_refuses_newer_schema(tmp_path):
+    """A file written by a NEWER schema is refused on load — an older
+    program re-saving it would silently drop newer fields."""
+    path = tmp_path / "future.json"
+    knowledge = KnowledgeBase(path, universe="universe_001")
+    knowledge.register_model("linear", "y = k*x", {"k": 1.0})
+    knowledge.save()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["schema_version"] = SCHEMA_VERSION + 1
+    data["definitions"] = []
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="newer than this program's"):
+        KnowledgeBase(path, universe="universe_001")

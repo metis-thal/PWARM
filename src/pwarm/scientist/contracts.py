@@ -62,6 +62,18 @@ class ConditionBinding:
 _OBSERVATION_FIELDS = frozenset({"t", "z", "vx"})
 
 
+def observation_fields() -> frozenset:
+    """Read-only view of the declared observation channels — the single
+    vocabulary knowledge-layer definitions may name."""
+    return frozenset(_OBSERVATION_FIELDS)
+
+
+def reduction_rules() -> tuple:
+    """Read-only view of the declared reduction rule names (deterministic
+    order) — the single vocabulary knowledge-layer definitions may name."""
+    return tuple(sorted(_REDUCTION_RULES))
+
+
 @dataclass(frozen=True)
 class OutputBinding:
     """Explicit AI-side contract between the model's output vocabulary and
