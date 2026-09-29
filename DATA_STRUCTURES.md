@@ -866,7 +866,7 @@ AI模型是真值的学习近似。
 
 ## 12. Genesis: Prediction–Commitment–Verification / 预测-承诺-验证
 
-The scientist layer's epistemic data structures — eleven frozen dataclasses
+The scientist layer's epistemic data structures — twelve frozen dataclasses
 forming a hash-anchored hypothesis-testing ledger (all AI-side,
 measurement-only; see ARCHITECTURE.md §Scientist Layer). / 科学家层的认识论
 数据结构：十一个冻结 dataclass 构成 hash 锚定的假设检验账本。
@@ -883,7 +883,8 @@ measurement-only; see ARCHITECTURE.md §Scientist Layer). / 科学家层的认�
 | `ComparisonInput` | prediction, field, observed | read-only alignment of prediction ↔ channel |
 | `ObservationReduction` | channel, rule | rule "first" = channel[0] (= h − g·dt² for drop z); unsupported rule → ValueError |
 | `EvidenceSummary` | counts + independent_evidence | unit = (prediction_id, experiment_id); orphaned verifications skipped |
-| `CompetitionState` | experiment_ids, confirmed/refuted/conflicts, provenance, verifications | unit = (model_ref, experiment_id); verdict disagreement → conflict, never tie-broken |
+| `CompetitionState` | experiment_ids, confirmed/refuted/conflicts, provenance, verifications, last_verification_at | unit = (model_ref, experiment_id); verdict disagreement → conflict, never tie-broken |
+| `ModelRecord` | model_id, formula, params, derived_from, status, supersedes, content_hash | declared fact, never an evaluation (no score/confidence/accuracy/winner); hash over declared fields only; params immutable — changes are a new record + supersedes chain; status lifecycle-only (registered or superseded); standing is derived from the ledger |
 
 **Adjudication rule (single source: `verify_prediction`)** / 裁决规则（单一来源）：
 

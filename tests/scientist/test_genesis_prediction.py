@@ -51,17 +51,20 @@ from pwarm.scientist import (
 from pwarm.scientist import adjudication as adjudication_module
 from pwarm.scientist import agent as agent_module
 from pwarm.scientist import contracts as contracts_module
+from pwarm.scientist import knowledge_records as knowledge_records_module
 from pwarm.scientist import models as models_module
 from pwarm.scientist import prediction as prediction_module
 from pwarm.scientist import records as records_module
 from pwarm.scientist import state as state_module
 from pwarm.scientist.agent import proposal_to_spec
+from pwarm.scientist.knowledge_records import ModelRecord, verify_model_record
 
 # Every module carrying Genesis adjudication logic (P2-9 split the facade
 # into four implementations). The truth-free scans below must cover where
 # the code actually lives, not just the re-export facade.
 GENESIS_MODULES = (prediction_module, models_module, contracts_module,
-                   records_module, adjudication_module)
+                   records_module, adjudication_module,
+                   knowledge_records_module)
 
 
 def _genesis_sources() -> list[str]:
@@ -549,7 +552,7 @@ def test_pre_phase1_knowledge_files_remain_valid(tmp_path):
     knowledge.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 3   # v3: commitments carry contracts
+    assert data["schema_version"] == 4   # v4: knowledge entities (ModelRecord)
     assert data["laws"][0]["name"] == "gravity"
     assert data["predictions"] == [] and data["verifications"] == []
 
@@ -704,6 +707,14 @@ def _rival_pair(k: float = 1.0) -> tuple[ScientificModel, ScientificModel]:
     """Step-1's test models: H1 y=k*x vs H2 y=k*x^2."""
     return (ScientificModel(model_id="linear", params={"k": k}),
             ScientificModel(model_id="quadratic", params={"k": k}))
+
+
+def _register_rival_models(knowledge, k: float = 1.0) -> None:
+    """KL-1: the rival pair's identities, registered (idempotent)."""
+    for model_id, formula in (("linear", "y = k*x"),
+                              ("quadratic", "y = k*x^2")):
+        if knowledge.model_record(model_id) is None:
+            knowledge.register_model(model_id, formula, {"k": k})
 
 
 def test_multiple_conditions_yield_multiple_comparisons():
@@ -1464,7 +1475,9 @@ def test_full_chain_reaches_the_verdict(lab, tmp_path):
 def _committed_rivals(agent, tolerances=None):
     """rank -> propose -> commit BOTH rivals under the winning condition,
     with an explicit per-model tolerance (P1-5) and the full verification
-    contract declared up front (P1-4)."""
+    contract declared up front (P1-4); the rival identities are registered
+    first (KL-1)."""
+    _register_rival_models(agent.knowledge)
     h1, h2 = _rival_pair()
     proposal = agent.propose_discriminating_experiment(
         (h1, h2), [{"x": 5.0}])
@@ -1525,6 +1538,7 @@ def test_later_prediction_changes_cannot_touch_commitments(lab, tmp_path):
     tampering with a STORED record is detected by its hash."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
     agent = ScientistAgent(lab, knowledge)
+    _register_rival_models(knowledge)
     h1, h2 = _rival_pair()
     proposal = agent.propose_discriminating_experiment(
         (h1, h2), [{"x": 5.0}])
@@ -1594,6 +1608,7 @@ def test_commitments_precede_execution(lab, tmp_path):
     commitments are already persisted."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
     agent = ScientistAgent(lab, knowledge)
+    _register_rival_models(knowledge)
     h1, h2 = _rival_pair()
     proposal = agent.propose_discriminating_experiment(
         (h1, h2), [{"x": 5.0}])
@@ -1636,6 +1651,7 @@ def test_competition_chain_stops_at_commitment(lab, tmp_path):
     No experiment runs; both commitments sit in the ledger, hash-verified."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
     agent = ScientistAgent(lab, knowledge)
+    _register_rival_models(knowledge)
     calls: list[ExperimentSpec] = []
     real_run = agent.laboratory.run_experiment
 
@@ -1665,8 +1681,10 @@ def test_competition_chain_stops_at_commitment(lab, tmp_path):
 
 def _competed_and_executed(lab, tmp_path, tolerances=None):
     """Steps 2–6 + one execution: rivals committed (with their full
-    verification contract), experiment run ONCE."""
+    verification contract), experiment run ONCE; identities registered
+    first (KL-1)."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    _register_rival_models(knowledge)
     agent = ScientistAgent(lab, knowledge)
     h1, h2 = _rival_pair()
     proposal = agent.propose_discriminating_experiment(
@@ -2938,6 +2956,7 @@ def test_commitment_without_contract_refused(lab, tmp_path):
     never silently filled with defaults."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
     agent = ScientistAgent(lab, knowledge)
+    _register_rival_models(knowledge)
     h1, h2 = _rival_pair()
     proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 5.0}])
     with pytest.raises(ValueError, match="must declare its verification"):
@@ -3135,6 +3154,7 @@ def test_missing_tolerance_mapping_refused(lab, tmp_path):
     """No tolerances at all -> refused; nothing is committed."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
     agent = ScientistAgent(lab, knowledge)
+    _register_rival_models(knowledge)
     h1, h2 = _rival_pair()
     proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 5.0}])
     with pytest.raises(ValueError, match="declared explicitly"):
@@ -3151,6 +3171,7 @@ def test_partially_declared_tolerance_refused(lab, tmp_path):
     tolerance is never filled from any default."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
     agent = ScientistAgent(lab, knowledge)
+    _register_rival_models(knowledge)
     h1, h2 = _rival_pair()
     proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 5.0}])
     with pytest.raises(ValueError, match="quadratic"):
@@ -3168,6 +3189,7 @@ def test_declared_tolerances_are_the_only_source(lab, tmp_path):
     only when the AI actually declares it."""
     knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
     agent = ScientistAgent(lab, knowledge)
+    _register_rival_models(knowledge)
     h1, h2 = _rival_pair()
     proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 5.0}])
     records = agent.commit_discriminating_predictions(
@@ -3457,3 +3479,204 @@ def test_competition_state_empty_has_no_timestamp(tmp_path):
 
     assert state.verifications == ()
     assert state.last_verification_at == ""
+
+
+# -- Knowledge Layer KL-1: addressable model identities -------------------------
+#
+# A ModelRecord is a DECLARED FACT, not an evaluation object: no score, no
+# confidence, no accuracy, no winner — and a status vocabulary limited to
+# registered | superseded (lifecycle only, never quality). The declared
+# content is frozen and hash-anchored; a changed model is a NEW record plus
+# a supersedes link. Standing is derived from the ledger, never stored, and
+# matches STORED model_ref strings exactly (no migration, no merging).
+
+def test_model_registration_freezes_declared_content(tmp_path):
+    """Registration freezes the declared facts and hash-anchors them; the
+    record round-trips through save/reload byte-for-byte."""
+    knowledge = _identity_knowledge(tmp_path)
+    record = knowledge.register_model(
+        "linear", "y = k*x", {"k": 1.0}, derived_from="hypothesis fit")
+
+    assert record.status == "registered"
+    assert record.params == {"k": 1.0}
+    assert record.derived_from == "hypothesis fit"
+    assert record.supersedes == ""
+    assert record.created_at
+    assert verify_model_record(record)
+
+    reloaded = KnowledgeBase(knowledge.path, universe="universe_001")
+    stored = reloaded.model_record("linear")
+    assert stored is not None
+    assert stored.formula == "y = k*x"
+    assert stored.params == {"k": 1.0}
+    assert verify_model_record(stored)
+
+
+def test_model_declared_content_tamper_detected(tmp_path):
+    """Editing any DECLARED field (identity, form, params, provenance)
+    breaks the content hash; bookkeeping edits do not."""
+    knowledge = _identity_knowledge(tmp_path)
+    record = knowledge.register_model("linear", "y = k*x", {"k": 1.0})
+
+    assert not verify_model_record(replace(record, params={"k": 2.0}))
+    assert not verify_model_record(replace(record, formula="y = 2k*x"))
+    assert not verify_model_record(replace(record, model_id="other"))
+    assert not verify_model_record(replace(record, derived_from="nowhere"))
+    # bookkeeping is outside the hash
+    assert verify_model_record(replace(record, status="superseded"))
+    assert verify_model_record(replace(record, supersedes="older-model"))
+
+
+def test_duplicate_model_id_refused_params_change_needs_new_record(tmp_path):
+    """Identity is unique: re-registering an id is refused — parameter
+    changes are a NEW ModelRecord plus a supersede chain."""
+    knowledge = _identity_knowledge(tmp_path)
+    knowledge.register_model("linear", "y = k*x", {"k": 1.0})
+    with pytest.raises(ValueError, match="already registered"):
+        knowledge.register_model("linear", "y = k*x", {"k": 2.0})
+    with pytest.raises(ValueError, match="non-empty"):
+        knowledge.register_model("", "y = k*x", {})
+
+    # the honest path: new identity + supersede chain
+    knowledge.register_model("linear-v2", "y = k*x", {"k": 2.0})
+    old, new = knowledge.supersede_model("linear", "linear-v2")
+    assert old.status == "superseded"
+    assert new.supersedes == "linear"
+    assert verify_model_record(old) and verify_model_record(new)
+
+
+def test_model_supersede_refusals(tmp_path):
+    """Unknown ids, self-supersede, already-superseded identities and
+    double-linked replacements are all refused loudly."""
+    knowledge = _identity_knowledge(tmp_path)
+    first = knowledge.register_model("m1", "f1", {})
+    second = knowledge.register_model("m2", "f2", {})
+
+    with pytest.raises(ValueError, match="unknown model"):
+        knowledge.supersede_model("nope", second.model_id)
+    with pytest.raises(ValueError, match="unknown model"):
+        knowledge.supersede_model(first.model_id, "nope")
+    with pytest.raises(ValueError, match="cannot supersede itself"):
+        knowledge.supersede_model(first.model_id, first.model_id)
+
+    third = knowledge.register_model("m3", "f3", {})
+    knowledge.supersede_model(first.model_id, second.model_id)
+    with pytest.raises(ValueError, match="only a registered"):
+        knowledge.supersede_model(first.model_id, third.model_id)
+
+    knowledge.supersede_model(second.model_id, third.model_id)
+    fourth = knowledge.register_model("m4", "f4", {})
+    with pytest.raises(ValueError, match="already supersedes"):
+        knowledge.supersede_model(fourth.model_id, third.model_id)
+
+    assert knowledge.model_record("m1").status == "superseded"
+    assert knowledge.model_record("m2").status == "superseded"
+    assert knowledge.model_record("m3").status == "registered"
+    assert knowledge.model_record("m3").supersedes == "m2"
+
+
+def test_model_record_schema_is_facts_not_scores():
+    """The record's fields and status vocabulary are pinned: declared facts
+    plus bookkeeping only — no score, confidence, accuracy, winner, rank,
+    weight or probability field can ever appear; status is lifecycle-only."""
+    assert [f.name for f in dataclasses.fields(ModelRecord)] == [
+        "model_id", "formula", "params", "derived_from", "created_at",
+        "status", "supersedes", "content_hash"]
+    forbidden = {"score", "confidence", "accuracy", "winner", "rank",
+                 "weight", "probability", "quality", "fitness"}
+    assert not any(f.name in forbidden for f in dataclasses.fields(ModelRecord))
+    statuses = {r.status for r in
+                (ModelRecord(model_id="m", formula="f"),)}
+    assert statuses == {"registered"}   # the only status an op does not set
+
+
+def test_commitments_reference_registered_model_ids(lab, tmp_path):
+    """The competition path commits with the REGISTERED model id as
+    model_ref — the free-form "model {id}" string is gone."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    records, _ = _committed_rivals(agent)
+
+    assert {r.model_ref for r in records} == {"linear", "quadratic"}
+    for record in records:
+        assert knowledge.model_record(record.model_ref) is not None
+
+
+def test_unregistered_or_superseded_model_refused(lab, tmp_path):
+    """A commitment must reference a registered identity: unregistered
+    models are refused by name, and a superseded identity cannot receive
+    new predictions."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 5.0}])
+
+    with pytest.raises(ValueError, match="not registered"):
+        agent.commit_discriminating_predictions(
+            (h1, h2), proposal, kind="drop",
+            tolerances={"linear": 0.5, "quadratic": 0.5},
+            binding=ConditionBinding({"x": "drop_height"}),
+            output_binding=OutputBinding({"y": "z"}), output="y",
+            reduction=ObservationReduction(channel="z", rule="first"))
+
+    _register_rival_models(knowledge)
+    knowledge.register_model("linear-v2", "y = k*x", {"k": 1.0})
+    knowledge.supersede_model("linear", "linear-v2")
+    with pytest.raises(ValueError, match="superseded"):
+        agent.commit_discriminating_predictions(
+            (h1, h2), proposal, kind="drop",
+            tolerances={"linear": 0.5, "quadratic": 0.5},
+            binding=ConditionBinding({"x": "drop_height"}),
+            output_binding=OutputBinding({"y": "z"}), output="y",
+            reduction=ObservationReduction(channel="z", rule="first"))
+    assert knowledge.predictions == {}    # nothing slipped through
+
+
+def test_standing_derives_through_registered_identity(lab, tmp_path):
+    """End-to-end identity resolution: register -> commit -> experiment ->
+    verify -> competition_state(model_id) resolves the full provenance
+    chain model -> prediction -> experiment -> verification."""
+    knowledge, agent, records, observation = _competed_and_executed(
+        lab, tmp_path, tolerances={"linear": 0.01, "quadratic": 0.5})
+    _verify_rivals(agent, records, observation)
+
+    state = knowledge.competition_state("linear")
+    assert state.model_ref == "linear"
+    assert state.independent_experiment_count == 1
+    assert state.confirmed_count == 1 and state.refuted_count == 0
+    for prediction_id, experiment_id, verification_id in state.provenance:
+        prediction = knowledge.predictions[prediction_id]
+        assert prediction.model_ref == "linear"
+        assert prediction.spec_ref == experiment_id
+        assert knowledge.verifications[verification_id].prediction_id \
+            == prediction_id
+
+
+def test_pre_kl1_model_refs_are_never_migrated_or_merged(tmp_path):
+    """Compatibility policy: a v3-era store's predictions keep their stored
+    free-form model_ref strings; loading adds an empty registry, saving
+    upgrades the schema, and standing for a registered id NEVER absorbs
+    predictions stored under a different string (exact match, no guessing)."""
+    path = tmp_path / "v3_store.json"
+    knowledge = KnowledgeBase(path, universe="universe_001")
+    knowledge.commit_prediction(
+        model_ref="model linear", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5,
+        reduction_channel="z", reduction_rule="free_fall_g")
+
+    reloaded = KnowledgeBase(path, universe="universe_001")
+    assert reloaded.model_record("linear") is None     # empty registry
+    assert reloaded.predictions["pred-0001"].model_ref == "model linear"
+    reloaded.register_model("linear", "y = k*x", {"k": 1.0})
+    reloaded.save()
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 4
+    assert data["predictions"][0]["model_ref"] == "model linear"  # untouched
+
+    final = KnowledgeBase(path, universe="universe_001")
+    summary = final.evidence_for_model("linear")
+    assert summary.verification_count == 0    # "model linear" != "linear"
+    legacy = final.evidence_for_model("model linear")
+    assert legacy.verification_count == 0     # still readable under its key
+    assert final.predictions["pred-0001"].model_ref == "model linear"

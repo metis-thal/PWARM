@@ -23,6 +23,8 @@ AI_MODULES = [
     "uncertainty.py", "budget.py", "experiment_value.py", "instrument.py",
     # prediction.py's split implementation modules (P2-9 facade)
     "models.py", "contracts.py", "records.py", "adjudication.py",
+    # knowledge entities (Knowledge Layer KL-1+)
+    "knowledge_records.py",
 ]
 
 

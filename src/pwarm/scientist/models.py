@@ -91,7 +91,9 @@ def model_prediction(model: ScientificModel,
         claim=model.model_id,
         value=float(value),
         tolerance=tolerance,
-        source=f"model {model.model_id}",
+        # KL-1: the prediction's model reference IS the registered identity
+        # id (KnowledgeBase.register_model) — never a decorated string.
+        source=model.model_id,
     )
 
 

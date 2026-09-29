@@ -653,6 +653,7 @@ Key invariants (structurally enforced by tests):
 | `agent.py` | The scientific-method loop: predict → commit → execute → verify → learn |
 | `knowledge.py` | Civilization knowledge: laws + the append-only commitment/verification ledger + evidence aggregation |
 | `prediction.py` | Genesis core facade (re-export shim): the implementation lives in `models.py` (candidate models, rival predictions, discriminating ranking, belief translation), `contracts.py` (both bindings, spec_ref identity format, declared reduction registry), `records.py` (ledger dataclasses + commitment hash) and `adjudication.py` (the single verdict rule + both commitment-honoring adjudication entries) |
+| `knowledge_records.py` | Knowledge entities (KL-1+): `ModelRecord` — addressable, hash-anchored model identities; declared facts, never evaluations |
 | `state.py` | Self-model: uncertainty intervals per manifest parameter |
 | `designer.py` + `information.py` + `budget.py` + `experiment_value.py` | Value-ranked experiment selection under a live budget |
 | `instrument.py` | Gap analysis → instrument request → catalog grant |

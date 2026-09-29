@@ -18,6 +18,7 @@ from .experiments import REGISTRY
 from .hypothesis import Hypothesis, Verification, fit_free_fall, verify
 from .instrument import InstrumentCatalog, InstrumentGrant, InstrumentRequest, analyze_gap
 from .knowledge import KnowledgeBase, LawRecord
+from .knowledge_records import ModelRecord
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
 from .prediction import (
@@ -60,6 +61,7 @@ __all__ = [
     "LawRecord",
     "Mission",
     "MissionReport",
+    "ModelRecord",
     "ObservationRecord",
     "ObservationReduction",
     "OutputBinding",

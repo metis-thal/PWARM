@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .knowledge_records import ModelRecord, model_content_hash
 from .prediction import (
     CompetitionState,
     EvidenceSummary,
@@ -34,12 +35,13 @@ from .prediction import (
     competition_state as build_competition_state,
 )
 
-# Schema 3: PredictionRecords carry their declared verification contract
-# (condition/output binding + observation reduction) inside the commitment
-# hash. Older files load unchanged; v2-era predictions (committed before
-# contracts existed) fail verify_commitment and are REFUSED for
-# adjudication — never silently re-interpreted under an invented contract.
-SCHEMA_VERSION = 3
+# Schema 4: the Knowledge Layer's first entity — ModelRecord, an addressable
+# model identity whose declared content is frozen and hash-anchored. v3-era
+# files load unchanged (empty registry); predictions are untouched and their
+# stored model_ref strings are NEVER migrated or rewritten — derivations
+# keep matching them exactly as stored, so a registered model_id aggregates
+# precisely the predictions that reference it.
+SCHEMA_VERSION = 4
 
 
 def _next_ordinal(ids, prefix: str) -> int:
@@ -82,6 +84,7 @@ class KnowledgeBase:
         self.laws: dict[str, LawRecord] = {}
         self.predictions: dict[str, PredictionRecord] = {}
         self.verifications: dict[str, VerificationRecord] = {}
+        self.model_records: dict[str, ModelRecord] = {}
         self.load()
 
     @classmethod
@@ -94,6 +97,7 @@ class KnowledgeBase:
     def load(self) -> None:
         if not self.path.exists():
             self.laws = {}
+            self.model_records = {}
             return
         with self.path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -145,6 +149,19 @@ class KnowledgeBase:
             )
             for rec in data.get("verifications", [])
         }
+        self.model_records = {
+            rec["model_id"]: ModelRecord(
+                model_id=rec["model_id"],
+                formula=rec.get("formula", ""),
+                params=dict(rec.get("params", {})),
+                derived_from=rec.get("derived_from", ""),
+                created_at=rec.get("created_at", ""),
+                status=rec.get("status", "registered"),
+                supersedes=rec.get("supersedes", ""),
+                content_hash=rec.get("content_hash", ""),
+            )
+            for rec in data.get("model_records", [])
+        }
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -156,6 +173,8 @@ class KnowledgeBase:
             "predictions": [asdict(rec) for rec in self.predictions.values()],
             "verifications": [asdict(rec)
                               for rec in self.verifications.values()],
+            "model_records": [asdict(rec)
+                              for rec in self.model_records.values()],
         }
         with self.path.open("w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2, ensure_ascii=False)
@@ -358,6 +377,86 @@ class KnowledgeBase:
         self.predictions[new_id] = new
         self.save()
         return old, new
+
+    # -- Knowledge Layer KL-1: addressable model identities ------------------
+    #
+    # ModelRecords are DECLARED FACTS, not evaluations: the declared content
+    # (model_id, formula, params, derived_from) is frozen at registration and
+    # hash-anchored; a changed model is a NEW record plus a supersedes link,
+    # never an edit. Status is lifecycle-only (registered | superseded) and
+    # can never express quality — no score, confidence, accuracy or winner
+    # exists in this layer. Model standing is derived from the ledger
+    # (competition_state), never stored. Standing matches the STORED
+    # model_ref strings exactly: old-format predictions are never migrated,
+    # rewritten or merged into a registered id's view.
+
+    def register_model(self, model_id: str, formula: str,
+                       params: dict[str, float] | None = None,
+                       derived_from: str = "") -> ModelRecord:
+        """Register a model identity — a DECLARED FACT, frozen at creation.
+
+        The identity is unique: a duplicate model_id is refused (parameter
+        changes are a NEW ModelRecord plus a supersede link, never an
+        edit). The declared content is hash-anchored; status is
+        lifecycle-only (registered | superseded).
+        """
+        if not model_id:
+            raise ValueError("model_id must be a non-empty identifier")
+        if model_id in self.model_records:
+            raise ValueError(
+                f"model {model_id!r} is already registered — parameter "
+                "changes are a NEW ModelRecord plus a supersede link, "
+                "never an edit")
+        record = ModelRecord(
+            model_id=model_id,
+            formula=formula,
+            params=dict(params or {}),
+            derived_from=derived_from,
+            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+        record = replace(record, content_hash=model_content_hash(record))
+        self.model_records[model_id] = record
+        self.save()
+        return record
+
+    def supersede_model(self, old_id: str,
+                        new_id: str) -> tuple[ModelRecord, ModelRecord]:
+        """Replace one registered model identity with another.
+
+        The changed-model linkage, explicit: the old identity's status
+        becomes ``superseded`` and the new record's ``supersedes`` points
+        back — provenance without editing either record's declared
+        content (both are replaced, never mutated, both still
+        hash-verify). Refused loudly when: either id is unknown, old and
+        new are the same identity, the old identity is already
+        superseded, or the new record already supersedes something else.
+        """
+        old = self.model_records.get(old_id)
+        if old is None:
+            raise ValueError(f"unknown model {old_id!r}")
+        new = self.model_records.get(new_id)
+        if new is None:
+            raise ValueError(f"unknown model {new_id!r}")
+        if old_id == new_id:
+            raise ValueError(f"model {old_id!r} cannot supersede itself")
+        if old.status != "registered":
+            raise ValueError(
+                f"only a registered model identity can be superseded; "
+                f"{old_id} is {old.status!r}")
+        if new.supersedes:
+            raise ValueError(
+                f"{new_id} already supersedes {new.supersedes!r} — "
+                "register a fresh identity instead")
+        old = replace(old, status="superseded")
+        new = replace(new, supersedes=old_id)
+        self.model_records[old_id] = old
+        self.model_records[new_id] = new
+        self.save()
+        return old, new
+
+    def model_record(self, model_id: str) -> ModelRecord | None:
+        """The registered identity for model_id, or None when unknown."""
+        return self.model_records.get(model_id)
 
     def prediction(self, prediction_id: str) -> PredictionRecord | None:
         return self.predictions.get(prediction_id)

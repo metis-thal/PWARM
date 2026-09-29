@@ -291,7 +291,29 @@ class ScientistAgent:
         hashed commitment: what the AI promised and how it may later be
         adjudicated are frozen together. A commitment without a contract
         is refused, never silently filled.
+
+        KL-1: every model must be a REGISTERED identity
+        (KnowledgeBase.register_model) — commitments reference addressable
+        model ids, never free-form strings, and a superseded identity
+        cannot receive new predictions.
         """
+        unregistered: list[str] = []
+        withdrawn: list[str] = []
+        for model in models:
+            record = self.knowledge.model_record(model.model_id)
+            if record is None:
+                unregistered.append(model.model_id)
+            elif record.status != "registered":
+                withdrawn.append(model.model_id)
+        if unregistered:
+            raise ValueError(
+                f"model(s) {sorted(unregistered)} are not registered — a "
+                "commitment must reference a registered model identity, "
+                "never a free-form string")
+        if withdrawn:
+            raise ValueError(
+                f"model(s) {sorted(withdrawn)} are superseded — a withdrawn "
+                "identity cannot receive new predictions")
         if tolerances is None:
             raise ValueError(
                 "tolerances must be declared explicitly per model — no "
