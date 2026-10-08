@@ -20,8 +20,10 @@ from .hypothesis import Hypothesis, Verification, fit_free_fall, verify
 from .instrument import InstrumentCatalog, InstrumentGrant, InstrumentRequest, analyze_gap
 from .knowledge import KnowledgeBase, LawRecord
 from .knowledge_records import (
+                                QUESTION_KINDS,
                                 DefinitionRecord,
                                 ModelRecord,
+                                QuestionRecord,
                                 RelationEvidence,
                                 RelationRecord,
 )
@@ -46,6 +48,7 @@ from .state import ScientistState
 from .uncertainty import certainty_class, relative_width, total_uncertainty
 
 __all__ = [
+                                "QUESTION_KINDS",
                                 "REGISTRY",
                                 "ComparisonInput",
                                 "CompetitionState",
@@ -72,6 +75,7 @@ __all__ = [
                                 "ObservationRecord",
                                 "ObservationReduction",
                                 "OutputBinding",
+                                "QuestionRecord",
                                 "RelationEvidence",
                                 "RelationRecord",
                                 "ScientificModel",

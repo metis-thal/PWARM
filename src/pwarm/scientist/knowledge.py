@@ -21,13 +21,16 @@ from pathlib import Path
 
 from .contracts import observation_fields, reduction_rules
 from .knowledge_records import (
+    QUESTION_KINDS,
     DefinitionRecord,
     ModelLineage,
     ModelRecord,
+    QuestionRecord,
     RelationEvidence,
     RelationRecord,
     definition_content_hash,
     model_content_hash,
+    question_content_hash,
     relation_content_hash,
     validate_concept_id,
 )
@@ -49,14 +52,14 @@ from .prediction import (
     competition_state as build_competition_state,
 )
 
-# Schema 6: the Knowledge Layer's third entity — RelationRecord, a declared
-# candidate generalization whose local/held-out standing is derived from
-# the ledger (KL-3). v5-era files load unchanged (empty relation registry);
+# Schema 7: the Knowledge Layer's fourth entity — QuestionRecord, a declared
+# open research question traceable to its triggering facts (AS fact-driven
+# agenda). v6-era files load unchanged (empty question registry);
 # predictions are untouched and their stored model_ref strings are NEVER
 # migrated or rewritten — derivations keep matching them exactly as stored.
 # Loading a file written by a NEWER schema is refused (an older program
 # re-saving it would silently drop newer fields).
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def _next_ordinal(ids, prefix: str) -> int:
@@ -102,6 +105,7 @@ class KnowledgeBase:
         self.model_records: dict[str, ModelRecord] = {}
         self.definitions: dict[str, DefinitionRecord] = {}
         self.relations: dict[str, RelationRecord] = {}
+        self.questions: dict[str, QuestionRecord] = {}
         self.load()
 
     @classmethod
@@ -117,6 +121,7 @@ class KnowledgeBase:
             self.model_records = {}
             self.definitions = {}
             self.relations = {}
+            self.questions = {}
             return
         with self.path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -219,6 +224,22 @@ class KnowledgeBase:
             )
             for rec in data.get("relations", [])
         }
+        self.questions = {
+            rec["question_id"]: QuestionRecord(
+                question_id=rec["question_id"],
+                kind=rec.get("kind", ""),
+                source_fact_type=rec.get("source_fact_type", ""),
+                source_ids=tuple(rec.get("source_ids", [])),
+                question=rec.get("question", ""),
+                declared_by=rec.get("declared_by", ""),
+                created_at=rec.get("created_at", ""),
+                status=rec.get("status", "open"),
+                supersedes=rec.get("supersedes", ""),
+                content_hash=rec.get("content_hash", ""),
+            )
+            for rec in data.get("questions", [])
+        }
+
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,6 +256,7 @@ class KnowledgeBase:
             "definitions": [asdict(rec)
                             for rec in self.definitions.values()],
             "relations": [asdict(rec) for rec in self.relations.values()],
+            "questions": [asdict(rec) for rec in self.questions.values()],
         }
         with self.path.open("w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2, ensure_ascii=False)
@@ -778,6 +800,102 @@ class KnowledgeBase:
         return derive_relation_evidence(
             relation, self.evidence_for_model(relation.parameters_ref))
 
+
+    # -- Autonomous Scientist AS-1: declared research questions ---------------
+    #
+    # QuestionRecords are TO-INVESTIGATE markers, not evaluations: no
+    # priority, importance, urgency or confidence exists on a question —
+    # the research agenda's order comes from a declared deterministic
+    # precedence (AS-2), never from a computed score. Questions are
+    # traceable to their triggering facts (source_fact_type + source_ids,
+    # id references only) and their kind vocabulary is CLOSED (the
+    # fact-driven scanners); free-form questions are refused by design.
+
+    def declare_question(self, kind: str, source_fact_type: str,
+                         source_ids: tuple[str, ...], question: str,
+                         declared_by: str = "") -> QuestionRecord:
+        """Declare an open research question.
+
+        The kind must come from the closed scanner vocabulary
+        (``QUESTION_KINDS``); the source reference must be non-empty;
+        and an identical OPEN question (same kind and source ids) is
+        refused — the fact-driven agenda never accumulates duplicate
+        markers for one gap. Withdrawing a question releases its slot
+        (the scanners may re-propose it while the fact exists).
+        """
+        if kind not in QUESTION_KINDS:
+            raise ValueError(
+                f"unknown question kind {kind!r}; valid: {list(QUESTION_KINDS)}")
+        if not source_fact_type:
+            raise ValueError("a question needs a source_fact_type (which "
+                             "fact derivation triggered it)")
+        source_ids = tuple(source_ids)
+        if not source_ids or any(not sid for sid in source_ids):
+            raise ValueError(
+                "source_ids must be a non-empty tuple of non-empty id "
+                "references")
+        if len(set(source_ids)) != len(source_ids):
+            raise ValueError("source_ids must be unique")
+        if not question:
+            raise ValueError("a question needs a stated research question")
+        if self.open_question(kind, source_ids) is not None:
+            raise ValueError(
+                f"an open {kind!r} question for {sorted(source_ids)} already "
+                "exists — the agenda never duplicates a marker for one gap")
+        record = QuestionRecord(
+            question_id=f"ques-{_next_ordinal(self.questions, 'ques-'):04d}",
+            kind=kind,
+            source_fact_type=source_fact_type,
+            source_ids=source_ids,
+            question=question,
+            declared_by=declared_by,
+            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+        record = replace(record, content_hash=question_content_hash(record))
+        self.questions[record.question_id] = record
+        self.save()
+        return record
+
+    def withdraw_question(self, question_id: str) -> QuestionRecord:
+        """Withdraw an open question — "not now", never "answered".
+
+        Whether the underlying fact still exists is re-derived from the
+        store on every scan; withdrawal only removes the marker from the
+        open agenda.
+        """
+        record = self.questions.get(question_id)
+        if record is None:
+            raise ValueError(f"unknown question {question_id!r}")
+        if record.status != "open":
+            raise ValueError(
+                f"only an open question can be withdrawn; {question_id} is "
+                f"{record.status!r}")
+        record = replace(record, status="withdrawn")
+        self.questions[question_id] = record
+        self.save()
+        return record
+
+    def question(self, question_id: str) -> QuestionRecord | None:
+        """The question record for question_id, or None when unknown."""
+        return self.questions.get(question_id)
+
+    def open_question(self, kind: str,
+                      source_ids: tuple[str, ...]) -> QuestionRecord | None:
+        """The open question for an exact (kind, source_ids) gap, or None."""
+        ids = tuple(source_ids)
+        for record in self.questions.values():
+            if (record.status == "open" and record.kind == kind
+                    and record.source_ids == ids):
+                return record
+        return None
+
+    def open_questions(self) -> tuple[QuestionRecord, ...]:
+        """All open questions, in declaration (ordinal) order — the raw
+        agenda the declared precedence of AS-2 orders."""
+        return tuple(sorted(
+            (record for record in self.questions.values()
+             if record.status == "open"),
+            key=lambda record: record.question_id))
 
     def prediction(self, prediction_id: str) -> PredictionRecord | None:
         return self.predictions.get(prediction_id)

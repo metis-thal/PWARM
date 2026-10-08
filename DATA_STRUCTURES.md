@@ -866,7 +866,7 @@ AI模型是真值的学习近似。
 
 ## 12. Genesis: Prediction–Commitment–Verification / 预测-承诺-验证
 
-The scientist layer's epistemic data structures — fifteen frozen dataclasses
+The scientist layer's epistemic data structures — sixteen frozen dataclasses
 forming a hash-anchored hypothesis-testing ledger (all AI-side,
 measurement-only; see ARCHITECTURE.md §Scientist Layer). / 科学家层的认识论
 数据结构：十一个冻结 dataclass 构成 hash 锚定的假设检验账本。
@@ -888,6 +888,7 @@ measurement-only; see ARCHITECTURE.md §Scientist Layer). / 科学家层的认�
 | `DefinitionRecord` | definition_id, concept_id, kind, unit, channel, reduction_rule, description, status, supersedes, content_hash | vocabulary, not truth: (channel, reduction_rule) IS the operational definition, validated against contracts.py's declared vocabularies; concept_id is stable across revisions (claim resolution), at most one active per concept (atomic supersede); lookup-only — never a source for VerificationRecords |
 | `RelationRecord` | relation_id, subject, formula, parameters_ref, scope, declared_by, status, supersedes, content_hash | declaration, not evaluation: scope (training battery) is the single training/held-out boundary; rivals coexist; revisions chain via supersedes (same subject + model); no "established" status exists |
 | `RelationPair` / `RelationEvidence` | pairs (prediction_id, experiment_id, verification_id, status) + confirmed/refuted counts + distinct conditions | PURE DERIVATION via relation_evidence(relation, EvidenceSummary) — never persisted, never in schema; status projected from VerificationRecord; local (in-scope) vs generalization (held-out) facts only |
+| `QuestionRecord` | question_id, kind, source_fact_type, source_ids, question, status, supersedes, content_hash | TO-INVESTIGATE marker, not evaluation (no priority/importance/urgency/score); closed scanner vocabulary; source_ids are id references; at most one open marker per (kind, source_ids) gap; withdrawal says "not now", never "answered" |
 
 **Adjudication rule (single source: `verify_prediction`)** / 裁决规则（单一来源）：
 

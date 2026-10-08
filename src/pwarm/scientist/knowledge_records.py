@@ -16,6 +16,12 @@ Two kinds of declared facts live here, both strictly NON-evaluative:
   it from the ledger, splitting verifications into local (in-scope) and
   generalization (held-out) facts. Counts and condition sets only —
   never a score, ranking, winner or establishment judgment.
+* :class:`QuestionRecord` (AS-1) — a DECLARED open research question,
+  traceable to the facts that triggered it (source_fact_type +
+  source_ids). Questions are TO-INVESTIGATE markers, not evaluations:
+  no priority, importance, urgency or confidence exists; the research
+  agenda's order comes from a declared deterministic precedence, never
+  from a computed score.
 
 No score, confidence, accuracy, winner or truth value exists in this
 layer; status vocabularies are lifecycle-only.
@@ -331,5 +337,73 @@ class ModelLineage:
     predictions: tuple[PredictionRecord, ...]   # commitment (seq) order
     verifications: dict[str, tuple[VerificationRecord, ...]]
     # keyed by prediction_id, verification-id order within each group
+# -- AS-1: declared research questions -----------------------------------------
+#
+# A QuestionRecord is a TO-INVESTIGATE marker, not an evaluation: it records
+# that the AI has committed to investigating a fact-shaped gap, with full
+# traceability to the triggering facts (source_fact_type + source_ids — id
+# references, never ledger copies). The question kinds are a CLOSED
+# vocabulary (the fact-driven scanners of AS-2); free-form questions are
+# refused by design. There is no priority, importance, urgency or
+# confidence on a question — the research agenda's order comes from a
+# declared deterministic precedence, never from a computed score.
+
+QUESTION_KINDS = (
+    "untested_generality",     # a relation has training facts but no held-out ones
+    "anomaly",                 # a model carries refuted/conflicted verdicts
+    "undefined_concept",       # a claim appears in predictions without a definition
+    "unverified_identity",     # a registered model has zero verifications
+)
+
+
+@dataclass(frozen=True)
+class QuestionRecord:
+    """A declared open research question — to-investigate, not evaluation.
+
+    ``content_hash`` anchors the DECLARED fields (kind, source_fact_type,
+    source_ids, question, declared_by); question_id / created_at / status
+    / supersedes are bookkeeping and stay outside the hash.
+
+    ``source_ids`` are id REFERENCES into the store (relation ids, model
+    ids, concept ids — per ``source_fact_type``), never copies of ledger
+    content. Status is lifecycle-only (open | withdrawn): withdrawing
+    says "not now", never "answered" — whether a question's underlying
+    fact still exists is re-derived from the store on every scan.
+    """
+
+    question_id: str = ""             # "ques-NNNN" ordinal (bookkeeping)
+    kind: str = ""                    # declared: one of QUESTION_KINDS
+    source_fact_type: str = ""        # declared: which fact derivation triggered it
+    source_ids: tuple[str, ...] = field(default_factory=tuple)
+    # declared: id references to the triggering facts
+    question: str = ""                # declared: the research question, stated
+    declared_by: str = ""             # declared provenance
+    created_at: str = ""              # ISO timestamp (informational)
+    status: str = "open"              # open | withdrawn
+    supersedes: str = ""              # bookkeeping lineage slot (consistent form)
+    content_hash: str = ""
+
+
+def question_payload(record: QuestionRecord) -> dict:
+    """The tamper-evident content of a question declaration: the declared
+    fields only (bookkeeping stays outside the hash)."""
+    return {
+        "kind": record.kind,
+        "source_fact_type": record.source_fact_type,
+        "source_ids": list(record.source_ids),
+        "question": record.question,
+        "declared_by": record.declared_by,
+    }
+
+
+def question_content_hash(record: QuestionRecord) -> str:
+    """sha256 over the declared fields (deterministic serialization)."""
+    return commitment_hash(question_payload(record))
+
+
+def verify_question_record(record: QuestionRecord) -> bool:
+    """Recompute the content hash — False means the declared content was
+    edited after declaration (tampering or corruption)."""
+    return record.content_hash == question_content_hash(record)
 
 

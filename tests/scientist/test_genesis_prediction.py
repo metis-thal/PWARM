@@ -59,14 +59,17 @@ from pwarm.scientist import state as state_module
 from pwarm.scientist.agent import HeldOutTrial, proposal_to_spec
 from pwarm.scientist.knowledge import SCHEMA_VERSION
 from pwarm.scientist.knowledge_records import (
+    QUESTION_KINDS,
     DefinitionRecord,
     ModelLineage,
     ModelRecord,
+    QuestionRecord,
     RelationEvidence,
     RelationRecord,
     relation_evidence,
     verify_definition_record,
     verify_model_record,
+    verify_question_record,
     verify_relation_record,
 )
 
@@ -563,7 +566,7 @@ def test_pre_phase1_knowledge_files_remain_valid(tmp_path):
     knowledge.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 6   # v6: + RelationRecord (KL-3)
+    assert data["schema_version"] == 7   # v7: + QuestionRecord (AS-1)
     assert data["laws"][0]["name"] == "gravity"
     assert data["predictions"] == [] and data["verifications"] == []
 
@@ -3682,7 +3685,7 @@ def test_pre_kl1_model_refs_are_never_migrated_or_merged(tmp_path):
     reloaded.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 6
+    assert data["schema_version"] == 7
     assert data["predictions"][0]["model_ref"] == "model linear"  # untouched
 
     final = KnowledgeBase(path, universe="universe_001")
@@ -3930,7 +3933,7 @@ def test_v4_store_loads_and_upgrades_to_v5(tmp_path):
     reloaded.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 6
+    assert data["schema_version"] == 7
     assert data["predictions"][0]["model_ref"] == "linear"
     assert data["model_records"][0]["model_id"] == "linear"
     assert data["definitions"][0]["concept_id"] == "z_first"
@@ -4290,7 +4293,7 @@ def test_v5_store_loads_and_upgrades_to_v6(tmp_path):
     reloaded.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 6
+    assert data["schema_version"] == 7
     assert data["definitions"][0]["concept_id"] == "gravity"
     assert data["relations"][0]["subject"] == "z_first"
 # -- Knowledge Layer KL-4: lineage queries --------------------------------------
@@ -4662,5 +4665,144 @@ def test_held_out_trial_structure_pin():
                  "weight", "probability", "quality", "established"}
     assert not any(f.name in forbidden
                    for f in dataclasses.fields(HeldOutTrial))
+# -- Autonomous Scientist AS-1: declared research questions ---------------------
+#
+# A QuestionRecord is a TO-INVESTIGATE marker, not an evaluation: no score,
+# priority, importance, urgency or confidence field can exist; kinds are a
+# CLOSED scanner vocabulary; source_ids are id references (never ledger
+# copies); the agenda never duplicates a marker for one gap; withdrawal says
+# "not now", never "answered".
+
+def test_question_declaration_freezes_and_round_trips(tmp_path):
+    """The declared content is hash-anchored and survives save/reload."""
+    knowledge = _identity_knowledge(tmp_path)
+    record = knowledge.declare_question(
+        kind="untested_generality", source_fact_type="relation_evidence",
+        source_ids=("rel-0001",), question="does it generalize?",
+        declared_by="fact-driven scanner")
+
+    assert record.status == "open"
+    assert record.kind == "untested_generality"
+    assert record.source_ids == ("rel-0001",)
+    assert record.supersedes == ""
+    assert verify_question_record(record)
+
+    reloaded = KnowledgeBase(knowledge.path, universe="universe_001")
+    stored = reloaded.question(record.question_id)
+    assert stored is not None
+    assert stored.question == "does it generalize?"
+    assert verify_question_record(stored)
+
+
+def test_question_declared_content_tamper_detected(tmp_path):
+    """Editing any DECLARED field breaks the content hash; bookkeeping
+    edits do not."""
+    knowledge = _identity_knowledge(tmp_path)
+    record = knowledge.declare_question(
+        kind="anomaly", source_fact_type="competition_state",
+        source_ids=("linear",), question="why was it refuted?")
+
+    assert not verify_question_record(replace(record, kind="anomaly2"))
+    assert not verify_question_record(replace(record, source_ids=("other",)))
+    assert not verify_question_record(replace(record, question="changed?"))
+    # bookkeeping is outside the hash
+    assert verify_question_record(replace(record, status="withdrawn"))
+
+
+def test_question_validation_closed_vocabulary(tmp_path):
+    """Kinds are the closed scanner vocabulary; free-form questions are
+    refused by design; source references and the stated question are
+    required; duplicates are unique."""
+    knowledge = _identity_knowledge(tmp_path)
+    with pytest.raises(ValueError, match="unknown question kind"):
+        knowledge.declare_question(
+            kind="why_is_the_sky_blue", source_fact_type="fact",
+            source_ids=("x",), question="?")
+    with pytest.raises(ValueError, match="source_fact_type"):
+        knowledge.declare_question(
+            kind="anomaly", source_fact_type="",
+            source_ids=("x",), question="?")
+    with pytest.raises(ValueError, match="non-empty id references"):
+        knowledge.declare_question(
+            kind="anomaly", source_fact_type="fact",
+            source_ids=(), question="?")
+    with pytest.raises(ValueError, match="needs a stated"):
+        knowledge.declare_question(
+            kind="anomaly", source_fact_type="fact",
+            source_ids=("x",), question="")
+    with pytest.raises(ValueError, match="must be unique"):
+        knowledge.declare_question(
+            kind="anomaly", source_fact_type="fact",
+            source_ids=("x", "x"), question="?")
+
+    for kind in QUESTION_KINDS:      # every scanner kind is declarable
+        knowledge.declare_question(
+            kind=kind, source_fact_type="fact",
+            source_ids=(kind,), question=f"investigate {kind}?")
+    assert len(knowledge.open_questions()) == len(QUESTION_KINDS)
+
+
+def test_question_duplicate_open_gap_refused_withdraw_releases(tmp_path):
+    """One gap, one marker: an identical open question is refused; after
+    withdrawal the slot is released (the scanner may re-propose while the
+    fact exists); withdrawn questions keep their history."""
+    knowledge = _identity_knowledge(tmp_path)
+    first = knowledge.declare_question(
+        kind="anomaly", source_fact_type="competition_state",
+        source_ids=("linear",), question="why refuted?")
+
+    with pytest.raises(ValueError, match="already"):
+        knowledge.declare_question(
+            kind="anomaly", source_fact_type="competition_state",
+            source_ids=("linear",), question="why refuted (again)?")
+
+    withdrawn = knowledge.withdraw_question(first.question_id)
+    assert withdrawn.status == "withdrawn"
+    assert knowledge.open_question("anomaly", ("linear",)) is None
+
+    second = knowledge.declare_question(
+        kind="anomaly", source_fact_type="competition_state",
+        source_ids=("linear",), question="why refuted (re-asked)?")
+    assert second.question_id != first.question_id
+    assert knowledge.question(first.question_id).status == "withdrawn"
+
+    with pytest.raises(ValueError, match="only an open"):
+        knowledge.withdraw_question(first.question_id)   # already withdrawn
+    with pytest.raises(ValueError, match="unknown question"):
+        knowledge.withdraw_question("ques-9999")
+
+
+def test_question_record_schema_is_facts_not_scores():
+    """Field and status pins: declared facts plus bookkeeping only — no
+    score, priority, importance, urgency or evaluation field can ever
+    appear; status is lifecycle-only (open | withdrawn)."""
+    assert [f.name for f in dataclasses.fields(QuestionRecord)] == [
+        "question_id", "kind", "source_fact_type", "source_ids", "question",
+        "declared_by", "created_at", "status", "supersedes", "content_hash"]
+    forbidden = {"score", "priority", "importance", "urgency", "confidence",
+                 "probability", "ranking", "winner", "accuracy", "quality",
+                 "established"}
+    assert not any(f.name in forbidden
+                   for f in dataclasses.fields(QuestionRecord))
+
+
+def test_open_questions_follow_declaration_order(tmp_path):
+    """open_questions is the raw agenda in declaration (ordinal) order —
+    the deterministic precedence of AS-2 orders it; withdrawal removes a
+    marker from the agenda without deleting history."""
+    knowledge = _identity_knowledge(tmp_path)
+    q1 = knowledge.declare_question(
+        kind="anomaly", source_fact_type="competition_state",
+        source_ids=("a",), question="?")
+    q2 = knowledge.declare_question(
+        kind="untested_generality", source_fact_type="relation_evidence",
+        source_ids=("r1",), question="?")
+    knowledge.withdraw_question(q2.question_id)
+    q3 = knowledge.declare_question(
+        kind="undefined_concept", source_fact_type="predictions_for_concept",
+        source_ids=("c1",), question="?")
+
+    assert [q.question_id for q in knowledge.open_questions()] \
+        == [q1.question_id, q3.question_id]
 
 
