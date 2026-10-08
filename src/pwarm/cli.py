@@ -12,7 +12,7 @@ universe's hidden truth for the epilogue ("ground truth / error"), but the
 AI scientist itself never does (see docs/architecture/ai-physics-contract.md).
 
 Commands:
-    pwarm demo [001|002|003]              headless discovery run (default 001)
+    pwarm demo [001|002|003|pilot]        headless discovery run (default 001)
     pwarm mission run <id> [--json DIR]   same run + AI-side result artifacts
     pwarm dashboard <id>                  how to launch the GL dashboard
     pwarm --version
@@ -211,10 +211,52 @@ def _write_artifacts(mission_id: str, report, out_dir: Path) -> None:
           "  (observations / hypotheses / report — no universe secrets)")
 
 
+def _run_pilot_demo() -> int:
+    """`pwarm demo pilot` — the Open Genesis Pilot, stranger-facing.
+
+    Cold start by default (fresh temp store, the mission-demo convention):
+    the scientist begins from NOTHING and must derive everything from
+    measurements through the measurement-only facade."""
+    from pwarm.scientist.pilot import run_open_genesis_pilot
+
+    knowledge_path = Path(tempfile.gettempdir()) / "pwarm_cli_pilot_kb.json"
+    knowledge_path.unlink(missing_ok=True)      # cold start: begin from nothing
+    print("=" * 70)
+    print("   PWARM OPEN GENESIS PILOT — an autonomous scientist cold start")
+    print("=" * 70)
+    print("Hidden universe constants: ?????          (the AI is not told)")
+    print("Knowledge base: EMPTY          (no models, no relations, no laws)")
+    print()
+    report = run_open_genesis_pilot(knowledge_path)
+    print(f"cold start (G-1): fitted family "
+          f"{report.bootstrap.family!r} (r^2 = {report.bootstrap.r2:.4f}), "
+          f"declared tolerance {report.bootstrap.tolerance:.4g}")
+    print(f"research cycles: {[o.action for o in report.cycle_outcomes]}")
+    for discovery in report.discoveries:
+        pair = discovery.representative_heldout_confirmed
+        print(f"first discovery: relation {discovery.relation_id} "
+              f"({discovery.subject} {discovery.formula}) held out at "
+              f"{pair.experiment_id} -> {pair.status.upper()}")
+    print()
+    for criterion in report.criterion_results:
+        print(f"  {criterion.criterion:<42} "
+              f"{'PASS' if criterion.passed else 'FAIL'}")
+    print()
+    print("=" * 70)
+    print("   PILOT ACCEPTED — independent physics verified every claim"
+          if report.accepted else
+          "   PILOT REJECTED — see the failing criteria above")
+    print("=" * 70)
+    return 0 if report.accepted else 1
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     mission_id = args.mission
+    if mission_id == "pilot":
+        return _run_pilot_demo()
     if mission_id not in MISSIONS:
-        print(f"unknown mission {mission_id!r}: choose from {sorted(MISSIONS)}")
+        print(f"unknown mission {mission_id!r}: choose from "
+              f"{sorted(MISSIONS) + ['pilot']}")
         return 2
     if args.knowledge:
         knowledge_path = Path(args.knowledge)
@@ -260,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
 
     demo = sub.add_parser("demo", help="headless discovery run (stranger test)")
     demo.add_argument("mission", nargs="?", default="001",
-                      choices=sorted(MISSIONS))
+                      choices=sorted(MISSIONS) + ["pilot"])
     demo.set_defaults(func=cmd_run, json=None, knowledge=None)
 
     run = sub.add_parser("mission", help="mission operations")
