@@ -1,0 +1,18 @@
+# World rules for genesis_pilot — same structural apparatus family as
+# universe_001 (drop experiments), different hidden constants. Rules are
+# declared capabilities (the scientist may know what it may run), not secrets.
+
+physics:
+  rigid: true
+  gravity_enabled: true
+  dt: 0.016666666666666666   # 1/60 s
+
+boundaries:
+  ground: true
+
+experiments:
+  allowed: [drop]
+
+notes: >
+  Open Genesis Pilot world: the scientist starts with an empty knowledge
+  layer and must derive everything from measurements.

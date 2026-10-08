@@ -103,6 +103,11 @@ def proposal_to_spec(proposal: ConditionComparison,
     return ExperimentSpec(kind=kind, **conditions)
 
 
+# G-1 tolerance-generation margin: the declared resolution claim is this
+# multiple of the max bootstrap-family training residual (F3: fixed before
+# any held-out observation exists; deterministic application thereafter).
+_TOLERANCE_MARGIN = 8.0
+
 @dataclass(frozen=True)
 class HeldOutTrial:
     """The transient result of one held-out trial — a convenience handle,
@@ -119,6 +124,7 @@ class HeldOutTrial:
     committed: tuple
     verifications: tuple
 
+
 @dataclass(frozen=True)
 class ResearchCycleOutcome:
     """The transient result of ONE research cycle — what question was
@@ -131,7 +137,30 @@ class ResearchCycleOutcome:
     verifications: tuple              # verdicts persisted (experiment-backed actions)
     definition: object | None = None  # DefinitionRecord (define_concept action)
 
+
+@dataclass(frozen=True)
+class BootstrapOutcome:
+    """The transient result of the G-1 cold start (Open Genesis Pilot):
+    the scientist's first model and relation, declared from its own
+    observations through the measurement-only facade.
+
+    ``tolerance`` is the F3 tolerance-generation rule's deterministic
+    application at bootstrap — margin × max training-family residual —
+    fixed HERE, before any held-out observation exists. ``observations``
+    records the (condition, response) dataset the fit used, for the
+    harness purity audit."""
+
+    model_record: object              # ModelRecord (identity = closed family name)
+    relation_record: object           # RelationRecord (scope = observed conditions)
+    tolerance: float                  # the declared resolution (rule-fixed)
+    family: str                       # the winning closed registry family
+    r2: float                         # fit quality of the winning family
+    max_training_residual: float      # the residual the tolerance derives from
+    observations: tuple = ()          # ((condition, response), ...) fit dataset
+
+
 class ScientistAgent:
+
     """An autonomous scientist working in an unknown universe."""
 
     def __init__(self, laboratory: Laboratory, knowledge: KnowledgeBase,
@@ -529,6 +558,75 @@ class ScientistAgent:
 
         return None
 
+
+    # -- Open Genesis Pilot G-1: cold-start bootstrap (purity-audited) --------
+    #
+    # observation → neutral fit → register model → declare relation.
+    # Generic mathematical capability only: two-family least squares over
+    # the closed registry families, response = the first z sample,
+    # regressor = the condition. No domain-specific interpretation happens
+    # here — the physical meaning of any coefficient, if it exists, must
+    # come from later auditable reasoning (Pilot specification, section L).
+
+    def bootstrap_relation_from_observations(
+            self, trials: Sequence[tuple[ExperimentSpec, ObservationRecord]],
+            subject: str,
+            declared_by: str = "",
+            ) -> BootstrapOutcome:
+        """Declare the scientist's first model and relation from its own
+        observations (G-1 cold start).
+
+        ``trials`` are (spec, observation) pairs from the scientist's own
+        exploration runs through the measurement-only facade. The dataset
+        is (condition, first-z-sample); the two closed-registry families
+        are fitted by least squares and the higher-r² family wins —
+        generic model selection, no domain-specific interpretation. The
+        declared tolerance is margin × max training-family residual: an
+        F3-compliant rule fixed before any held-out observation exists.
+
+        The fitted model maps to a closed registry family (its id IS the
+        family name) — an implementation limitation of the current
+        prediction backend, recorded as a capability boundary, not a
+        scientific prior.
+        """
+        if len(trials) < 2:
+            raise ValueError(
+                "bootstrap needs at least two observation trials")
+        xs: list[float] = []
+        ys: list[float] = []
+        scope: list[str] = []
+        for spec, observation in trials:
+            xs.append(float(spec.drop_height))
+            ys.append(float(observation.z[0]))
+            scope.append(spec.id)
+        families = (("linear", lambda x: x),
+                    ("quadratic", lambda x: x * x))
+        fitted = []
+        for family, basis in families:
+            phis = [basis(x) for x in xs]
+            k = sum(p * y for p, y in zip(phis, ys)) / sum(p * p for p in phis)
+            residuals = [y - k * p for p, y in zip(phis, ys)]
+            mean_y = sum(ys) / len(ys)
+            ss_tot = sum((y - mean_y) ** 2 for y in ys)
+            ss_res = sum(r * r for r in residuals)
+            r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
+            fitted.append((r2, family, k, max(abs(r) for r in residuals)))
+        fitted.sort(key=lambda item: (-item[0], item[1]))
+        r2, family, k, max_residual = fitted[0]
+        tolerance = _TOLERANCE_MARGIN * max_residual
+        formula = (f"{subject} = {k:.6g}*x" if family == "linear"
+                   else f"{subject} = {k:.6g}*x*x")
+        model_record = self.knowledge.register_model(
+            model_id=family, formula=formula, params={"k": k},
+            derived_from="bootstrap observations")
+        relation_record = self.knowledge.declare_relation(
+            subject=subject, formula=formula, parameters_ref=family,
+            scope=tuple(scope), declared_by=declared_by)
+        return BootstrapOutcome(
+            model_record=model_record, relation_record=relation_record,
+            tolerance=tolerance, family=family, r2=r2,
+            max_training_residual=max_residual,
+            observations=tuple(zip(xs, ys)))
 
     def _registered_model(self, model_id: str) -> ScientificModel:
 

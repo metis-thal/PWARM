@@ -1,0 +1,22 @@
+# Universe genesis_pilot — the Open Genesis Pilot's unknown world.
+#
+# Values marked `hidden: true` are the GROUND TRUTH of this universe. They
+# are loaded ONLY on the physics side (the harness builds the Laboratory from
+# them; the scientist never receives the config, the Universe object, or any
+# derived constant). The pilot's falsifiable claim is that the scientist can
+# discover the relation between condition and response from measurements
+# alone — with constants deliberately chosen far from textbook values so a
+# hard-coded answer cannot pass.
+
+name: Genesis Pilot World
+
+gravity:
+  hidden: true
+  value: 7.2
+
+air:
+  hidden: true
+  density: 1.225
+
+materials:
+  hidden: true
