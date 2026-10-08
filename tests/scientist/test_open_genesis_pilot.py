@@ -293,3 +293,28 @@ def test_belief_path_audit_catches_real_violations(pilot_parts):
     # and outside the window nothing is counted anymore
     agent.form_prediction(mission)
     assert counters.form_prediction == 1
+
+
+def test_pilot_refuses_pre_existing_store(tmp_path):
+    """Cold-start precondition (E-3/S-1): the pilot is a COLD-START
+    experiment — a second run on the same store is refused loudly instead
+    of crashing mid-bootstrap on an already-registered model."""
+    kb = tmp_path / "pilot_kb.json"
+    assert run_open_genesis_pilot(kb).accepted
+
+    with pytest.raises(ValueError, match="COLD-START"):
+        run_open_genesis_pilot(kb)
+
+
+def test_cli_demo_pilot_end_to_end(capsys):
+    """`pwarm demo pilot` — the stranger path: the CLI runs the full pilot
+    in-process on a fresh temp store and prints the acceptance verdict."""
+    from pwarm import cli
+
+    exit_code = cli.main(["demo", "pilot"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "PILOT ACCEPTED" in out
+    assert "E-14 independent verifier passed" in out
+    # and the run is repeatable: the CLI cold-starts from a fresh temp store
+    assert cli.main(["demo", "pilot"]) == 0

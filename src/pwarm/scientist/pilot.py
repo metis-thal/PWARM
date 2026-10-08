@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from ..universes import Universe, load_universe
 from .agent import BootstrapOutcome, ScientistAgent
@@ -553,6 +554,12 @@ def run_open_genesis_pilot(
         raise ValueError(
             "the pool must allow at least two bootstrap observations and "
             "one held-out condition")
+    kb = Path(kb_path)
+    if kb.exists():
+        raise ValueError(
+            f"knowledge store {kb} already exists — the Open Genesis Pilot "
+            "is a COLD-START experiment: the scientist must begin from an "
+            "empty knowledge base; delete the file or pass a fresh path")
     universe = load_universe(universe_id)
     journal = PilotExecutionLog()
     knowledge = KnowledgeBase(kb_path, universe_id)
