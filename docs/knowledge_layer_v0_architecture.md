@@ -222,6 +222,8 @@ Engine）、概念发现（Concept Discovery）、LawRecord 退役。
    通过（不堆功能）。
 
 
+---
+
 ## Realization status (as of KL-4, 2026-09-29)
 
 | Slice | Delivered | Schema |
@@ -231,6 +233,8 @@ Engine）、概念发现（Concept Discovery）、LawRecord 退役。
 | KL-3 | `RelationRecord` (subject/formula/parameters_ref/scope) + `RelationEvidence` pure derivation (local vs held-out split, fact counts); rivals coexist; no established | v6 |
 | KL-4 | `ModelLineage` + `model_lineage` / `predictions_for_model` / `predictions_for_concept` — pure reference resolution (model→predictions→verifications, concept→predictions); schema unchanged | v6 |
 | HP | `propose_held_out_condition` + `run_held_out_trial` (agent) — the generalization-trial discipline: deterministic caller-order selection over the scope/tested complement, commit-before-execute, verdicts via the existing chain; held-out is a design boundary, not an evaluation; schema unchanged | v6 |
+| AS-1/2/3 | `QuestionRecord` registry (closed scanner vocabulary, one open marker per gap) + four fact-driven scanners + declared anomaly-first precedence + one-step `research_cycle` (delegates to the existing closed loops) + `Discovery` derived view (a relation carries a held-out confirmed pair — the 0 → >=1 transition); no LLM, no scores, no established status; schema unchanged | v7 |
+
 Lineage chains are id references end to end; every derivation is pure
 (no writes, deterministic); no score/ranking/winner/confidence exists in
 the layer. Next (separately authorized): held-out prediction, autonomy.

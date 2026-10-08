@@ -62,6 +62,7 @@ from pwarm.scientist.knowledge import SCHEMA_VERSION
 from pwarm.scientist.knowledge_records import (
     QUESTION_KINDS,
     DefinitionRecord,
+    Discovery,
     ModelLineage,
     ModelRecord,
     QuestionRecord,
@@ -3959,6 +3960,8 @@ def test_loader_refuses_newer_schema(tmp_path):
 
     with pytest.raises(ValueError, match="newer than this program's"):
         KnowledgeBase(path, universe="universe_001")
+
+
 # -- Knowledge Layer KL-3: candidate relations and derived evidence ------------
 #
 # A RelationRecord is a declaration (subject/formula/model/scope), never an
@@ -4301,6 +4304,8 @@ def test_v5_store_loads_and_upgrades_to_v6(tmp_path):
     assert data["schema_version"] == 7
     assert data["definitions"][0]["concept_id"] == "gravity"
     assert data["relations"][0]["subject"] == "z_first"
+
+
 # -- Knowledge Layer KL-4: lineage queries --------------------------------------
 #
 # Pure reference resolution: model -> predictions -> verifications, and
@@ -4438,6 +4443,8 @@ def _quadratic_contract():
         "output": "y",
         "reduction": ObservationReduction(channel="z", rule="first"),
     }
+
+
 # -- Held-out Prediction HP-1: the condition proposal filter --------------------
 #
 # held-out is an experiment-design boundary, not a model evaluation. The
@@ -4670,6 +4677,8 @@ def test_held_out_trial_structure_pin():
                  "weight", "probability", "quality", "established"}
     assert not any(f.name in forbidden
                    for f in dataclasses.fields(HeldOutTrial))
+
+
 # -- Autonomous Scientist AS-1: declared research questions ---------------------
 #
 # A QuestionRecord is a TO-INVESTIGATE marker, not an evaluation: no score,
@@ -4809,6 +4818,8 @@ def test_open_questions_follow_declaration_order(tmp_path):
 
     assert [q.question_id for q in knowledge.open_questions()] \
         == [q1.question_id, q3.question_id]
+
+
 # -- Autonomous Scientist AS-2: scanners, precedence, and the research cycle ----
 #
 # The agenda is fact-driven and deterministic; the cycle composes existing
@@ -5144,3 +5155,193 @@ def test_research_cycle_honest_none_when_nothing_can_start(lab, tmp_path):
 
 
 
+# -- Autonomous Scientist AS-3: the minimal discovery fact ----------------------
+#
+# discovery 是派生事实视图，不是新知识实体：某 relation 的 held-out confirmed
+# 证据从无到有（0 → >=1），即是发现。全部走真实 Genesis/HP 路径产生证据，
+# 无手工 marker；发现不反向修改任何状态；无 established/proven/score。
+#
+# 场景注：linear k=1 在任意 drop_height 均预测 z_first = drop_height
+# （观测 ≈ h - g·dt²），故 held-out trial 用 tolerance 0.01 稳定 confirmed；
+# refuted 场景用紧 tolerance 0.001（观测差 g·dt² ≈ 0.0027 > 0.001）。
+
+def _discovery_setup(lab, tmp_path):
+    """A store with the linear model, a declared relation whose training
+    scope holds one confirmed trial (real Genesis/HP paths)."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    _commit_and_verify_linear_at(agent, knowledge, 1.0)   # training, confirmed
+    relation = knowledge.declare_relation(
+        subject="z_first", formula="z_first = drop_height",
+        parameters_ref="linear", scope=("drop_h1_m1",))
+    return knowledge, agent, relation
+
+
+def _commit_and_verify_linear_at(agent, knowledge, x, tolerance=0.01):
+    """Establish one verification for the linear model at condition x."""
+    model = ScientificModel(model_id="linear", params={"k": 1.0})
+    proposal = ConditionComparison(
+        conditions=(("x", x),), predictions=(), disagreement=0.0)
+    contract = _quadratic_contract()
+    contract = dict(contract, tolerances={"linear": tolerance})
+    committed = agent.commit_discriminating_predictions(
+        (model,), proposal, kind="drop", **contract)
+    observation = agent.execute_proposal(
+        proposal, kind="drop", binding=contract["binding"])
+    agent.verify_competing_predictions(
+        committed, observation, contract["output_binding"],
+        contract["output"], contract["reduction"])
+
+
+def test_discovery_absent_without_heldout_confirmed(lab, tmp_path):
+    """A+B: training-confirmed only, or a held-out REFUTED trial — neither
+    is a discovery (the quadratic model refutes beyond x=1)."""
+    knowledge, agent, relation = _discovery_setup(lab, tmp_path)
+    assert knowledge.discoveries() == ()            # training confirmed only
+
+    quadratic = ScientificModel(model_id="quadratic", params={"k": 1.0})
+    proposal = ConditionComparison(
+        conditions=(("x", 5.0),), predictions=(), disagreement=0.0)
+    contract = dict(_quadratic_contract(),
+                    tolerances={"quadratic": 0.01})
+    committed = agent.commit_discriminating_predictions(
+        (quadratic,), proposal, kind="drop", **contract)
+    observation = agent.execute_proposal(
+        proposal, kind="drop", binding=contract["binding"])
+    agent.verify_competing_predictions(
+        committed, observation, contract["output_binding"],
+        contract["output"], contract["reduction"])
+    # a held-out REFUTED pair exists now — still no discovery
+    evidence = knowledge.relation_evidence(relation)
+    assert evidence.heldout_pairs == ()   # quadratic pair belongs to its own model
+    assert knowledge.discoveries() == ()
+
+
+def test_discovery_appears_on_first_heldout_confirmation(lab, tmp_path):
+    """D: the temporal fact change — after a held-out CONFIRMED trial, the
+    relation enters the discoveries view with the right moment."""
+    knowledge, agent, relation = _discovery_setup(lab, tmp_path)
+    # first held-out trial with a too-tight tolerance: REFUTED (J: absent)
+    _commit_and_verify_linear_at(agent, knowledge, 5.0, tolerance=0.001)
+    assert knowledge.discoveries() == ()
+
+    # a properly tolerant held-out trial: CONFIRMED (D: present)
+    _commit_and_verify_linear_at(agent, knowledge, 5.0, tolerance=0.01)
+    discoveries = knowledge.discoveries()
+
+    assert len(discoveries) == 1
+    discovery = discoveries[0]
+    assert discovery.relation_id == relation.relation_id
+    assert discovery.parameters_ref == "linear"
+    assert discovery.representative_heldout_confirmed.status == "confirmed"
+    assert discovery.representative_heldout_confirmed.experiment_id == "drop_h5_m1"
+    assert len(discovery.heldout_confirmed_verification_ids) == 1
+    # the confirming verification's timestamp is derivable via the reference
+    assert knowledge.verifications[
+        discovery.representative_heldout_confirmed.verification_id].created_at != ""
+
+
+def test_discovery_is_pure_derivation_and_deterministic(lab, tmp_path):
+    """E+F: repeated reads are identical, and the derivation writes nothing
+    — the store's JSON is byte-identical after the query."""
+    knowledge, agent, _relation = _discovery_setup(lab, tmp_path)
+    _commit_and_verify_linear_at(agent, knowledge, 2.0)     # confirmed held-out
+    snapshot = knowledge.path.read_text(encoding="utf-8")
+
+    first = knowledge.discoveries()
+    second = knowledge.discoveries()
+
+    assert first == second and len(first) == 1
+    assert knowledge.path.read_text(encoding="utf-8") == snapshot
+    assert "discovery" not in json.loads(snapshot)    # no persisted state at all
+
+
+def test_discovery_one_per_relation_independent_across_relations(lab, tmp_path):
+    """G+H: multiple held-out confirmations for ONE relation yield exactly
+    one discovery (with every confirming id listed); different relations
+    produce independent discoveries."""
+    knowledge, agent, relation = _discovery_setup(lab, tmp_path)
+    _commit_and_verify_linear_at(agent, knowledge, 2.0)     # confirmed
+    _commit_and_verify_linear_at(agent, knowledge, 3.0)     # confirmed again
+
+    single = knowledge.discoveries()
+    assert len(single) == 1
+    assert len(single[0].heldout_confirmed_verification_ids) == 2
+
+    # a second, independent relation on the same model
+    knowledge.declare_relation(
+        subject="z_peak", formula="z_peak = drop_height",
+        parameters_ref="linear", scope=("drop_h3_m1",))
+    _commit_and_verify_linear_at(agent, knowledge, 10.0)    # held-out for B
+    both = knowledge.discoveries()
+
+    assert [d.relation_id for d in both] \
+        == sorted([relation.relation_id, "rel-0002"])
+    assert {d.parameters_ref for d in both} == {"linear"}
+
+
+def test_discovery_scope_cannot_be_confused(lab, tmp_path):
+    """I: repeated TRAINING confirmations (in-scope) and held-out REFUTED
+    trials do not trigger; only a held-out CONFIRMED pair does."""
+    knowledge, agent, _relation = _discovery_setup(lab, tmp_path)
+    _commit_and_verify_linear_at(agent, knowledge, 1.0)   # another in-scope pair
+    assert knowledge.discoveries() == ()
+
+    _commit_and_verify_linear_at(agent, knowledge, 5.0, tolerance=0.001)
+    assert knowledge.discoveries() == ()                  # held-out, refuted
+
+    _commit_and_verify_linear_at(agent, knowledge, 2.0)   # held-out, confirmed
+    assert len(knowledge.discoveries()) == 1
+
+
+def test_discovery_modifies_no_state(lab, tmp_path):
+    """K: reading discoveries changes nothing — question stays open, model
+    stays registered, relation stays candidate, prediction/verification
+    records stay identical, and no DiscoveryRecord entity exists to write."""
+    knowledge, agent, relation = _discovery_setup(lab, tmp_path)
+    question = knowledge.declare_question(
+        kind="untested_generality", source_fact_type="relation_evidence",
+        source_ids=(relation.relation_id,), question="?")
+    _commit_and_verify_linear_at(agent, knowledge, 2.0)   # confirming trial
+    snapshot = knowledge.path.read_text(encoding="utf-8")
+
+    discoveries = knowledge.discoveries()
+
+    assert len(discoveries) == 1
+    assert knowledge.path.read_text(encoding="utf-8") == snapshot
+    assert knowledge.question(question.question_id).status == "open"
+    assert knowledge.model_record("linear").status == "registered"
+    assert knowledge.relation(relation.relation_id).status == "candidate"
+
+
+def test_discovery_structure_pin():
+    """The view is structural facts only — no threshold, strength, score,
+    confidence, probability, established/proven/true label can appear."""
+    assert [f.name for f in dataclasses.fields(Discovery)] == [
+        "relation_id", "subject", "formula", "parameters_ref",
+        "representative_heldout_confirmed",
+        "heldout_confirmed_verification_ids"]
+    forbidden = {"score", "confidence", "probability", "importance",
+                 "quality", "ranking", "winner", "established", "proven",
+                 "truth", "threshold", "strength"}
+    assert not any(f.name in forbidden
+                   for f in dataclasses.fields(Discovery))
+
+
+def test_research_cycle_success_makes_discovery_visible(lab, tmp_path):
+    """The AS loop closes: research_cycle runs the held-out trial through
+    the existing chain — a confirming trial makes the relation visible in
+    discoveries() with no discovery-specific writes anywhere."""
+    knowledge, agent, relation = _discovery_setup(lab, tmp_path)
+    outcome = agent.research_cycle(
+        relation_condition_pools={relation.relation_id: [{"x": 2.0}]},
+        binding=ConditionBinding({"x": "drop_height"}),
+        tolerances={"linear": 0.01},
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
+
+    assert outcome is not None
+    assert outcome.action == "held_out_trial"
+    discoveries = knowledge.discoveries()
+    assert len(discoveries) == 1
+    assert discoveries[0].relation_id == relation.relation_id
+    assert discoveries[0].representative_heldout_confirmed.status == "confirmed"

@@ -23,12 +23,14 @@ from .contracts import observation_fields, reduction_rules
 from .knowledge_records import (
     QUESTION_KINDS,
     DefinitionRecord,
+    Discovery,
     ModelLineage,
     ModelRecord,
     QuestionRecord,
     RelationEvidence,
     RelationRecord,
     definition_content_hash,
+    discoveries_from,
     model_content_hash,
     question_content_hash,
     relation_content_hash,
@@ -239,7 +241,6 @@ class KnowledgeBase:
             )
             for rec in data.get("questions", [])
         }
-
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -658,6 +659,7 @@ class KnowledgeBase:
             if record.status == "active"
             and record.channel == channel
             and record.reduction_rule == reduction_rule)
+
     # -- Knowledge Layer KL-4: lineage queries --------------------------------
     #
     # Pure reference resolution over the store — no copies, no cache, no
@@ -800,6 +802,19 @@ class KnowledgeBase:
         return derive_relation_evidence(
             relation, self.evidence_for_model(relation.parameters_ref))
 
+    def discoveries(self) -> tuple[Discovery, ...]:
+        """The minimal discovery facts of this store, derived in the same
+        style as :meth:`relation_evidence` / :meth:`model_lineage`: a
+        declared relation yields a Discovery exactly when it carries at
+        least one held-out CONFIRMED verification.
+
+        Pure derivation over the ledger — nothing is written, nothing is
+        persisted, and no ``established`` status exists anywhere; ordered
+        by relation id.
+        """
+        return discoveries_from(tuple(
+            (relation, self.relation_evidence(relation))
+            for relation in self.relations.values()))
 
     # -- Autonomous Scientist AS-1: declared research questions ---------------
     #

@@ -141,3 +141,18 @@ held-out 确认"变为"存在 ≥1 个 held-out confirmed pair"。**
 
 
 ---
+
+## Realization status (as of AS-3, 2026-09-29)
+
+Delivered: four deterministic fact scanners (untested_generality / anomaly /
+undefined_concept / unverified_identity) → `QuestionRecord` registry (closed
+vocabulary, one open marker per gap, withdrawal = "not now") → declared
+anomaly-first precedence → one-step `research_cycle` delegating to the
+existing Genesis/HP/definition closed loops → `Discovery` derived view (a
+relation carrying a held-out confirmed pair (the 0 → >=1 transition); pure fact, no established label, no temporal claim).
+
+Explicitly NOT implemented (current boundary): LLM free-form questioning;
+multi-step autonomous planning; new experiment types; residual mining;
+concept invention; automatic established relations; automatic model
+retirement; multi-world research; Open Genesis; automatic creation of new
+physical worlds. Discovery is a derived fact — never "truth discovery".

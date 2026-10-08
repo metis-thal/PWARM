@@ -22,6 +22,7 @@ from .knowledge import KnowledgeBase, LawRecord
 from .knowledge_records import (
                                 QUESTION_KINDS,
                                 DefinitionRecord,
+                                Discovery,
                                 ModelRecord,
                                 QuestionRecord,
                                 RelationEvidence,
@@ -55,6 +56,7 @@ __all__ = [
                                 "ConditionBinding",
                                 "ConditionComparison",
                                 "DefinitionRecord",
+    "Discovery",
                                 "EvidenceSummary",
                                 "ExperimentBudget",
                                 "ExperimentDesigner",

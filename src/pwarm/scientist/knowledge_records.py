@@ -314,6 +314,8 @@ def _count_status(pairs: list[RelationPair], status: str) -> int:
 
 def _distinct_conditions(pairs: list[RelationPair]) -> tuple[str, ...]:
     return tuple(sorted({pair.experiment_id for pair in pairs}))
+
+
 # -- KL-4: lineage views -------------------------------------------------------
 #
 # A ModelLineage is a pure reference-resolution over the store: the model's
@@ -338,6 +340,8 @@ class ModelLineage:
     predictions: tuple[PredictionRecord, ...]   # commitment (seq) order
     verifications: dict[str, tuple[VerificationRecord, ...]]
     # keyed by prediction_id, verification-id order within each group
+
+
 # -- AS-1: declared research questions -----------------------------------------
 #
 # A QuestionRecord is a TO-INVESTIGATE marker, not an evaluation: it records
@@ -406,6 +410,8 @@ def verify_question_record(record: QuestionRecord) -> bool:
     """Recompute the content hash — False means the declared content was
     edited after declaration (tampering or corruption)."""
     return record.content_hash == question_content_hash(record)
+
+
 # -- AS-2: fact-driven research scanners and the declared precedence -----------
 #
 # The research agenda is FACT-DRIVEN: four deterministic scanners translate
@@ -534,3 +540,67 @@ def scan_unverified_identity(
     return tuple(candidates)
 
 
+# -- AS-3: the minimal discovery fact ------------------------------------------
+#
+# A Discovery is a DERIVED FACT, never a label: a declared relation has, for
+# the first time, a held-out CONFIRMED verification — it survived outside
+# its training scope. There is no threshold, no strength, no success rate
+# and no established/proven/true status anywhere in this view; whether the
+# generalization holds is read from the ledger facts, not awarded.
+
+@dataclass(frozen=True)
+class Discovery:
+    """The minimal scientific moment as a derived fact: a declared
+    relation survived its first held-out test.
+
+    ``representative_heldout_confirmed`` is a DETERMINISTICALLY SELECTED
+    representative of the relation's held-out confirmed pairs (the first
+    in verification-id order) — it carries NO temporal meaning and does
+    not claim to be the chronologically first confirmation (this view
+    holds no timestamps). It is a reference projection of the ledger's
+    own VerificationRecord (ids plus the projected status). Pure
+    derivation: never persisted, never a score, never an ``established``
+    status on the relation.
+    """
+
+    relation_id: str
+    subject: str
+    formula: str
+    parameters_ref: str
+    representative_heldout_confirmed: RelationPair
+    # deterministic representative of the held-out confirmed pairs —
+    # NOT a temporal claim (this view holds no timestamps)
+    heldout_confirmed_verification_ids: tuple[str, ...] = ()
+    # every confirming verification id, verification-id order (references);
+    # a confirming verification's created_at is derivable via the reference
+
+
+def discoveries_from(
+        relation_evidences: tuple[tuple[RelationRecord, RelationEvidence], ...],
+        ) -> tuple[Discovery, ...]:
+    """Derive the discovery facts from relations and their evidence views.
+
+    A relation yields a Discovery exactly when its evidence carries at
+    least one held-out CONFIRMED pair; the representative pair is the
+    first in verification-id order — a deterministic selection with NO
+    temporal meaning. Refuted-only relations yield nothing — failure is a
+    fact, not the absence of one. Pure function: no writes, deterministic
+    for unchanged inputs, ordered by relation id.
+    """
+    discoveries: list[Discovery] = []
+    for relation, evidence in relation_evidences:
+        confirmed = [pair for pair in evidence.heldout_pairs
+                     if pair.status == "confirmed"]
+        if not confirmed:
+            continue
+        first = confirmed[0]
+        confirmed_ids = tuple(pair.verification_id for pair in confirmed)
+        discoveries.append(Discovery(
+            relation_id=relation.relation_id,
+            subject=relation.subject,
+            formula=relation.formula,
+            parameters_ref=relation.parameters_ref,
+            representative_heldout_confirmed=first,
+            heldout_confirmed_verification_ids=confirmed_ids,
+        ))
+    return tuple(sorted(discoveries, key=lambda d: d.relation_id))
