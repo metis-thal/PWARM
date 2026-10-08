@@ -24,7 +24,16 @@ from .experiments import REGISTRY
 from .hypothesis import Hypothesis, Verification, fit_free_fall, verify
 from .instrument import InstrumentCatalog, analyze_gap
 from .knowledge import KnowledgeBase
-from .knowledge_records import RelationRecord
+from .knowledge_records import (
+    QuestionCandidate,
+    QuestionRecord,
+    RelationRecord,
+    order_research_candidates,
+    scan_anomaly,
+    scan_undefined_concept,
+    scan_untested_generality,
+    scan_unverified_identity,
+)
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
 from .prediction import (
@@ -109,6 +118,18 @@ class HeldOutTrial:
     experiment_id: str
     committed: tuple
     verifications: tuple
+
+@dataclass(frozen=True)
+class ResearchCycleOutcome:
+    """The transient result of ONE research cycle — what question was
+    acted upon, how, and which ledger facts the action produced. All
+    facts live in the ledger and its derived views; this is a handle."""
+
+    question: QuestionRecord          # freshly declared or pre-existing open
+    action: str                       # held_out_trial | novel_condition_trial | define_concept
+    committed: tuple                  # predictions committed (experiment-backed actions)
+    verifications: tuple              # verdicts persisted (experiment-backed actions)
+    definition: object | None = None  # DefinitionRecord (define_concept action)
 
 class ScientistAgent:
     """An autonomous scientist working in an unknown universe."""
@@ -335,6 +356,189 @@ class ScientistAgent:
             committed=tuple(committed),
             verifications=tuple(verifications),
         )
+
+    # -- Autonomous Scientist AS-2: the fact-driven research cycle -----------
+    #
+    # One cycle = scan the agenda (fact gaps) -> select by the DECLARED
+    # precedence -> declare the question (if fresh) -> execute its action
+    # through the EXISTING closed loops. No scoring, no outcome-biased
+    # selection, no new experiment path: every action delegates to the
+    # competition/held-out/definition machinery built in earlier slices.
+
+    def scan_research_agenda(self) -> tuple[QuestionCandidate, ...]:
+        """The fact-driven research agenda: all four scanners over this
+        store's derived facts, ordered by the declared precedence.
+
+        Pure derivation — nothing is written, no physics runs, and the
+        result is deterministic for an unchanged store. Outcomes enter the
+        agenda only as FAILURE facts (the anomaly scanner); confirmation
+        facts never promote anything.
+        """
+        knowledge = self.knowledge
+        relation_pairs = tuple(
+            (relation, knowledge.relation_evidence(relation))
+            for relation in knowledge.relations.values())
+        model_standings = tuple(
+            (record, knowledge.competition_state(record.model_id))
+            for record in knowledge.model_records.values())
+        claims = sorted({record.claim
+                         for record in knowledge.predictions.values()})
+        claim_status = tuple(
+            (claim, knowledge.active_definition(claim) is not None)
+            for claim in claims)
+        verification_counts = tuple(
+            (record, sum(len(group) for group
+                         in knowledge.model_lineage(
+                             record.model_id).verifications.values()))
+            for record in knowledge.model_records.values())
+        candidates = (
+            scan_anomaly(model_standings)
+            + scan_untested_generality(relation_pairs)
+            + scan_undefined_concept(claim_status)
+            + scan_unverified_identity(verification_counts))
+        return order_research_candidates(candidates)
+
+    def research_cycle(
+            self,
+            relation_condition_pools: Mapping[str, Sequence[dict[str, float]]]
+            | None = None,
+            model_condition_pools: Mapping[str, Sequence[dict[str, float]]]
+            | None = None,
+            concept_definitions: Mapping[str, tuple[str, str, str]]
+            | None = None,
+            kind: str = "drop",
+            binding: ConditionBinding | None = None,
+            tolerances: Mapping[str, float] | None = None,
+            output_binding: OutputBinding | None = None,
+            output: str | None = None,
+            reduction: ObservationReduction | None = None,
+            ) -> ResearchCycleOutcome | None:
+        """One step of the autonomous research loop.
+
+        Scans the agenda, walks it in the declared precedence, and executes
+        the FIRST candidate whose action can start, using only the
+        caller-supplied capabilities (condition pools, definitions) and
+        this store's facts:
+
+        * ``untested_generality`` → :meth:`run_held_out_trial` with the
+          relation's pool (``relation_condition_pools[relation_id]``);
+        * ``anomaly`` / ``unverified_identity`` → a novel-condition trial
+          for the model (``model_condition_pools[model_id]``): commit
+          before executing, verify through the existing chain;
+        * ``undefined_concept`` → :meth:`define_concept` with the
+          caller-supplied ``(unit, channel, reduction_rule)``.
+
+        The question is DECLARED before the action runs (fresh gaps are
+        declared here; pre-existing open questions are acted upon without
+        re-declaration). Candidates whose action cannot start (pool
+        exhausted, definition capability missing) are skipped
+        deterministically and stay open — failure and absence are facts,
+        never triggers that delete or retire anything. Returns None when
+        no candidate's action can start.
+        """
+        relation_pools = relation_condition_pools or {}
+        model_pools = model_condition_pools or {}
+        definitions = concept_definitions or {}
+        knowledge = self.knowledge
+
+        for candidate in self.scan_research_agenda():
+            # Actionability FIRST (pure, outcome-free, zero writes): a
+            # candidate whose action cannot start is skipped WITHOUT
+            # declaring a question — the registry never accumulates
+            # orphan markers for unactionable gaps.
+            if candidate.kind == "untested_generality":
+                relation = knowledge.relation(candidate.source_ids[0])
+                model = self._registered_model(relation.parameters_ref)
+                trial_proposal = self.propose_held_out_condition(
+                    (model,), relation,
+                    relation_pools.get(relation.relation_id, ()),
+                    kind, binding=binding)
+                if trial_proposal is None:
+                    continue
+            elif candidate.kind in ("anomaly", "unverified_identity"):
+                model_id = candidate.source_ids[0]
+                model = self._registered_model(model_id)
+                tested = knowledge.evidence_for_model(model_id).experiment_ids
+                trial_proposal = None
+                for conditions in model_pools.get(model_id, ()):
+                    candidate_comparison = ConditionComparison(
+                        conditions=tuple(sorted(conditions.items())),
+                        predictions=(), disagreement=0.0)
+                    if proposal_to_spec(candidate_comparison, kind,
+                                        binding).id not in tested:
+                        trial_proposal = candidate_comparison
+                        break
+                if trial_proposal is None:
+                    continue
+            elif candidate.kind == "undefined_concept":
+                if candidate.source_ids[0] not in definitions:
+                    continue          # no definition capability supplied
+            else:                     # pragma: no cover - closed vocabulary
+                continue
+
+            # Actionable: NOW declare the question (if fresh) — before any
+            # commitment, per the temporal discipline.
+            question = knowledge.open_question(
+                candidate.kind, candidate.source_ids)
+            if question is None:
+                question = knowledge.declare_question(
+                    kind=candidate.kind,
+                    source_fact_type=candidate.source_fact_type,
+                    source_ids=candidate.source_ids,
+                    question=candidate.question,
+                    declared_by="research cycle")
+
+            if candidate.kind == "untested_generality":
+                trial = self.run_held_out_trial(
+                    (model,), relation, relation_pools.get(
+                        relation.relation_id, ()),
+                    kind, binding=binding, tolerances=tolerances,
+                    output_binding=output_binding, output=output,
+                    reduction=reduction)
+                if trial is None:     # pragma: no cover - pre-checked
+                    continue
+                return ResearchCycleOutcome(
+                    question=question, action="held_out_trial",
+                    committed=trial.committed,
+                    verifications=trial.verifications)
+
+            if candidate.kind in ("anomaly", "unverified_identity"):
+                committed = self.commit_discriminating_predictions(
+                    (model,), trial_proposal, kind, tolerances=tolerances,
+                    binding=binding, output_binding=output_binding,
+                    output=output, reduction=reduction)
+                observation = self.execute_proposal(
+                    trial_proposal, kind, binding=binding)
+                verifications = self.verify_competing_predictions(
+                    committed, observation, output_binding, output,
+                    reduction)
+                return ResearchCycleOutcome(
+                    question=question, action="novel_condition_trial",
+                    committed=tuple(committed),
+                    verifications=tuple(verifications))
+
+            if candidate.kind == "undefined_concept":
+                unit, channel, reduction_rule = \
+                    definitions[candidate.source_ids[0]]
+                definition = knowledge.define_concept(
+                    candidate.source_ids[0], unit=unit, channel=channel,
+                    reduction_rule=reduction_rule)
+                return ResearchCycleOutcome(
+                    question=question, action="define_concept",
+                    definition=definition)
+
+        return None
+
+
+    def _registered_model(self, model_id: str) -> ScientificModel:
+
+        """Reconstruct the declared candidate from its frozen registration —
+        the AI investigates with its OWN registered models."""
+        record = self.knowledge.model_record(model_id)
+        if record is None:
+            raise ValueError(f"model {model_id!r} is not registered")
+        return ScientificModel(model_id=record.model_id,
+                               params=dict(record.params))
 
     # -- Model Competition Step 3: the AI proposes, physics will execute ----
 

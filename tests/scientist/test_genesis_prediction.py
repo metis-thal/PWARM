@@ -31,6 +31,7 @@ from pwarm.scientist import (
     CompetitionState,
     ConditionBinding,
     ConditionComparison,
+    EvidenceSummary,
     ExperimentSpec,
     KnowledgeBase,
     Laboratory,
@@ -67,6 +68,10 @@ from pwarm.scientist.knowledge_records import (
     RelationEvidence,
     RelationRecord,
     relation_evidence,
+    scan_anomaly,
+    scan_undefined_concept,
+    scan_untested_generality,
+    scan_unverified_identity,
     verify_definition_record,
     verify_model_record,
     verify_question_record,
@@ -4804,5 +4809,338 @@ def test_open_questions_follow_declaration_order(tmp_path):
 
     assert [q.question_id for q in knowledge.open_questions()] \
         == [q1.question_id, q3.question_id]
+# -- Autonomous Scientist AS-2: scanners, precedence, and the research cycle ----
+#
+# The agenda is fact-driven and deterministic; the cycle composes existing
+# loops under the declared precedence (anomaly first). Failure and absence
+# are facts, never triggers that delete, retire or re-score anything.
+
+def test_scanners_are_deterministic_and_pure():
+    """A: identical fact inputs produce identical candidates, every time —
+    and the scanners carry no state."""
+    relation = RelationRecord(relation_id="rel-0001", subject="z_first",
+                              formula="f", parameters_ref="m",
+                              scope=("E1",))
+    summary = EvidenceSummary(
+        model_ref="m", prediction_ids=("p",), experiment_ids=("E1",),
+        independent_prediction_count=1, independent_experiment_count=1,
+        independent_evidence_count=1, verification_count=1,
+        confirmed_count=1, refuted_count=0, residuals=(0.0,),
+        statuses=("confirmed",),
+        evidence=(VerificationRecord(
+            verification_id="v1", prediction_id="p", experiment_id="E1",
+            observed=1.0, residual=0.0, status="confirmed", evidence="e"),),
+        independent_evidence=(VerificationRecord(
+            verification_id="v1", prediction_id="p", experiment_id="E1",
+            observed=1.0, residual=0.0, status="confirmed", evidence="e"),))
+    pairs = ((relation, relation_evidence(relation, summary)),)
+
+    first = scan_untested_generality(pairs)
+    second = scan_untested_generality(pairs)
+
+    assert first == second
+    assert len(first) == 1
+    assert first[0].kind == "untested_generality"
+    assert first[0].source_ids == ("rel-0001",)
+
+
+def test_scanners_trigger_only_on_their_fact_gap():
+    """Each scanner fires exactly on its own gap: untested needs training
+    WITHOUT held-out; anomaly needs refuted/conflicts; undefined needs an
+    undefined claim; unverified needs zero verifications."""
+    model = ModelRecord(model_id="m", formula="f", params={})
+    state_clean = CompetitionState(
+        model_ref="m", experiment_ids=(), independent_experiment_count=0,
+        confirmed_count=0, refuted_count=0, conflicts=(), provenance=(),
+        verifications=(), last_verification_at="")
+    relation = RelationRecord(relation_id="r", subject="s", formula="f",
+                              parameters_ref="m", scope=("E1",))
+
+    assert scan_anomaly(((model, state_clean),)) == ()
+    assert scan_unverified_identity(((model, 3),)) == ()
+
+    state_refuted = replace(state_clean, refuted_count=1)
+    assert len(scan_anomaly(((model, state_refuted),))) == 1
+    state_conflict = replace(state_clean, conflicts=("E1",))
+    assert len(scan_anomaly(((model, state_conflict),))) == 1
+
+    # a relation with training pairs and no held-out pairs
+    summary = EvidenceSummary(
+        model_ref="m", prediction_ids=("p",), experiment_ids=("E1",),
+        independent_prediction_count=1, independent_experiment_count=1,
+        independent_evidence_count=1, verification_count=1,
+        confirmed_count=1, refuted_count=0, residuals=(0.0,),
+        statuses=("confirmed",),
+        evidence=(VerificationRecord(
+            verification_id="v1", prediction_id="p", experiment_id="E1",
+            observed=1.0, residual=0.0, status="confirmed", evidence="e"),),
+        independent_evidence=(VerificationRecord(
+            verification_id="v1", prediction_id="p", experiment_id="E1",
+            observed=1.0, residual=0.0, status="confirmed", evidence="e"),))
+    evidence = relation_evidence(relation, summary)
+    assert len(scan_untested_generality(((relation, evidence),))) == 1
+
+    # training empty (no pairs at all): nothing to generalize — no candidate
+    empty_summary = EvidenceSummary(
+        model_ref="m", prediction_ids=(), experiment_ids=(),
+        independent_prediction_count=0, independent_experiment_count=0,
+        independent_evidence_count=0, verification_count=0,
+        confirmed_count=0, refuted_count=0, residuals=(), statuses=(),
+        evidence=(), independent_evidence=())
+    assert scan_untested_generality(
+        ((relation, relation_evidence(relation, empty_summary)),)) == ()
+
+
+def test_undefined_concept_scanner_needs_usage_and_missing_definition():
+    """The scanner fires on claims that are USED but UNDEFINED — a defined
+    claim and an unused concept produce nothing."""
+    # entries are USED claims: (claim, defined) — defined fires nothing,
+    # used-but-undefined fires exactly once
+    assert scan_undefined_concept((("gravity", True),)) == ()
+    candidates = scan_undefined_concept(
+        (("gravity", False), ("air_density", True)))
+    assert len(candidates) == 1
+    assert candidates[0].kind == "undefined_concept"
+    assert candidates[0].source_ids == ("gravity",)
+
+
+def test_agent_agenda_scan_is_deterministic_and_writes_nothing(lab, tmp_path):
+    """B+C: the agenda scan never writes and never calls physics — and it
+    is deterministic for an unchanged store."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    _commit_and_verify_quadratic_at(agent, knowledge, 1.0)   # a refuted? no:
+    knowledge.register_model("lonely", "f", {})
+    _relation_on_quadratic(knowledge)
+    snapshot = knowledge.path.read_text(encoding="utf-8")
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+
+    first = agent.scan_research_agenda()
+    second = agent.scan_research_agenda()
+
+    assert first == second
+    assert calls == []
+    assert knowledge.path.read_text(encoding="utf-8") == snapshot
+    kinds = {c.kind for c in first}
+    assert "untested_generality" in kinds           # relation has no held-out
+    assert "unverified_identity" in kinds           # lonely model, zero verdicts
+
+
+def test_declared_precedence_puts_anomaly_first(lab, tmp_path):
+    """F: with ALL four gaps present and ALL capabilities supplied, the
+    cycle acts on the ANOMALY question — the declared precedence is fixed
+    and structural (refuting facts outrank confirmation-seeking)."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    # anomaly gap: quadratic refuted at x=5
+    _commit_and_verify_quadratic_at(agent, knowledge, 5.0)
+    # untested_generality gap: a relation with training, no held-out
+    knowledge.declare_relation(
+        subject="z_first", formula="f", parameters_ref="quadratic",
+        scope=("drop_h5_m1",))
+    # undefined_concept gap: a predicted claim without a definition
+    knowledge.commit_prediction(
+        model_ref="quadratic", claim="mystery", spec_ref="E9",
+        value=1.0, tolerance=1.0,
+        reduction_channel="z", reduction_rule="first")
+    # unverified_identity gap: a registered model with zero verdicts
+    knowledge.register_model("lonely", "f", {})
+
+    outcome = agent.research_cycle(
+        relation_condition_pools={"rel-0001": [{"x": 2.0}]},
+        model_condition_pools={"quadratic": [{"x": 2.0}],
+                               "lonely": [{"x": 2.0}]},
+        concept_definitions={"mystery": ("kg/m^3", "z", "first")},
+        binding=ConditionBinding({"x": "drop_height"}),
+        tolerances={"quadratic": 0.01},
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
+
+    assert outcome is not None
+    assert outcome.question.kind == "anomaly"       # the declared first
+    assert outcome.action == "novel_condition_trial"
+    assert outcome.question.source_ids == ("quadratic",)
+
+
+def test_research_cycle_declares_before_committing(lab, tmp_path):
+    """H: the temporal discipline inside the cycle — the question is
+    persisted BEFORE any prediction is committed, the commitments BEFORE
+    physics runs, and the verdicts after."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    _commit_and_verify_quadratic_at(agent, knowledge, 1.0)
+    knowledge.declare_relation(
+        subject="z_first", formula="f", parameters_ref="quadratic",
+        scope=("drop_h1_m1",))
+    events: list[tuple[str, int]] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        events.append(("experiment", len(knowledge.predictions),
+                       len(knowledge.questions)))
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    real_commit = agent.commit_discriminating_predictions
+
+    def spy_commit(models, proposal, kind, **kwargs):
+        records = real_commit(models, proposal, kind, **kwargs)
+        events.append(("commit", len(knowledge.predictions),
+                       len(knowledge.questions)))
+        return records
+
+    agent.commit_discriminating_predictions = spy_commit
+
+    outcome = agent.research_cycle(
+        relation_condition_pools={"rel-0001": [{"x": 5.0}]},
+        binding=ConditionBinding({"x": "drop_height"}),
+        tolerances={"quadratic": 0.01},
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
+
+    assert outcome is not None
+    # prediction count is 2 (training + cycle) but the QUESTION count is
+    # already 1 at commit time: declaration strictly precedes commitment
+    assert events == [("commit", 2, 1), ("experiment", 2, 1)]
+    # the question was declared before the commitment: both events saw 1
+    assert outcome.question.status == "open"
+
+
+def test_research_cycle_never_redeclares_an_open_question(lab, tmp_path):
+    """D: a pre-existing open question is ACTED upon, not re-declared —
+    the registry keeps exactly one marker per gap."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    _commit_and_verify_quadratic_at(agent, knowledge, 1.0)
+    knowledge.declare_relation(
+        subject="z_first", formula="f", parameters_ref="quadratic",
+        scope=("drop_h1_m1",))
+    pre_declared = knowledge.declare_question(
+        kind="untested_generality", source_fact_type="relation_evidence",
+        source_ids=(knowledge.relation("rel-0001").relation_id,),
+        question="pre-declared by the auditor")
+
+    outcome = agent.research_cycle(
+        relation_condition_pools={pre_declared.source_ids[0]:
+                                  [{"x": 5.0}]},
+        binding=ConditionBinding({"x": "drop_height"}),
+        tolerances={"quadratic": 0.01},
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
+
+    assert outcome is not None
+    assert outcome.question.question_id == pre_declared.question_id
+    assert len(knowledge.questions) == 1            # no duplicate marker
+
+
+def test_withdrawn_question_is_reproposed_by_the_cycle(lab, tmp_path):
+    """E: withdrawal releases the slot — the scanner re-proposes the gap
+    while the fact exists, and the cycle declares a FRESH question."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    _commit_and_verify_quadratic_at(agent, knowledge, 1.0)
+    knowledge.declare_relation(
+        subject="z_first", formula="f", parameters_ref="quadratic",
+        scope=("drop_h1_m1",))
+    first = knowledge.declare_question(
+        kind="untested_generality", source_fact_type="relation_evidence",
+        source_ids=("rel-0001",), question="not now")
+    knowledge.withdraw_question(first.question_id)
+
+    outcome = agent.research_cycle(
+        relation_condition_pools={"rel-0001": [{"x": 5.0}]},
+        binding=ConditionBinding({"x": "drop_height"}),
+        tolerances={"quadratic": 0.01},
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
+
+    assert outcome is not None
+    assert outcome.question.question_id != first.question_id   # fresh marker
+
+
+def test_refuted_trial_changes_no_question_model_or_relation_state(lab, tmp_path):
+    """I: failure is a fact, not a trigger. After a held-out trial comes
+    back REFUTED: the question stays open (never auto-withdrawn), the model
+    stays registered, the relation stays candidate — and the failure stays
+    fully visible in the evidence."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    _commit_and_verify_quadratic_at(agent, knowledge, 1.0)   # confirmed, in scope
+    relation = knowledge.declare_relation(
+        subject="z_first", formula="f", parameters_ref="quadratic",
+        scope=("drop_h1_m1",))
+    question = knowledge.declare_question(
+        kind="untested_generality", source_fact_type="relation_evidence",
+        source_ids=(relation.relation_id,), question="?")
+
+    outcome = agent.research_cycle(
+        relation_condition_pools={"rel-0001": [{"x": 5.0}]},   # 25 vs ~5
+        binding=ConditionBinding({"x": "drop_height"}),
+        tolerances={"quadratic": 0.01},
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
+
+    assert outcome is not None
+    assert all(v.status == "refuted" for v in outcome.verifications)
+    assert knowledge.question(question.question_id).status == "open"
+    assert knowledge.model_record("quadratic").status == "registered"
+    assert knowledge.relation(relation.relation_id).status == "candidate"
+    evidence = knowledge.relation_evidence(relation)
+    assert evidence.heldout_refuted_count == 1         # the failure stays visible
+    # the filled gap stops the scanner: the open marker simply persists
+    assert all(c.source_ids != (relation.relation_id,)
+               or c.kind != "untested_generality"
+               for c in agent.scan_research_agenda())
+
+
+def test_agenda_reads_failure_facts_never_success_facts(lab, tmp_path):
+    """G: verdict outcomes enter the agenda ONLY as failure facts. Two
+    structurally identical models — one refuted, one confirmed — produce
+    exactly one agenda candidate: the anomaly. Success never adds,
+    promotes or reorders anything."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    knowledge.register_model("guilty", "f", {})
+    knowledge.register_model("innocent", "f", {})
+    for model_ref, observed in (("guilty", 99.0), ("innocent", 1.0)):
+        pred = knowledge.commit_prediction(
+            model_ref=model_ref, claim="linear", spec_ref="E1",
+            value=1.0, tolerance=0.5,
+            reduction_channel="z", reduction_rule="first")
+        knowledge.record_verification(
+            pred.prediction_id, "E1",
+            PredictionOutcome(claim="linear", predicted=1.0, observed=observed,
+                              residual=observed - 1.0,
+                              status="refuted" if model_ref == "guilty"
+                              else "confirmed"))
+    # define the claim's vocabulary so the ONLY gap left is the anomaly
+    knowledge.define_concept("linear", unit="m", channel="z",
+                             reduction_rule="first")
+
+    agenda = agent.scan_research_agenda()
+
+    assert [c.kind for c in agenda] == ["anomaly"]
+    assert agenda[0].source_ids == ("guilty",)   # the failure, not the success
+
+
+def test_research_cycle_honest_none_when_nothing_can_start(lab, tmp_path):
+    """An empty agenda, or candidates whose capabilities are absent,
+    return an honest None with nothing declared or committed."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+
+    assert agent.research_cycle() is None               # empty store: no gaps
+
+    _commit_and_verify_quadratic_at(agent, knowledge, 1.0)
+    knowledge.declare_relation(
+        subject="z_first", formula="f", parameters_ref="quadratic",
+        scope=("drop_h1_m1",))
+    before = (dict(knowledge.predictions), dict(knowledge.questions))
+
+    outcome = agent.research_cycle()                    # no pools supplied
+
+    assert outcome is None                              # nothing could start
+    assert (dict(knowledge.predictions), dict(knowledge.questions)) == before
+
 
 

@@ -33,6 +33,7 @@ import re
 from dataclasses import dataclass, field
 
 from .records import (
+    CompetitionState,
     EvidenceSummary,
     PredictionRecord,
     VerificationRecord,
@@ -405,5 +406,131 @@ def verify_question_record(record: QuestionRecord) -> bool:
     """Recompute the content hash — False means the declared content was
     edited after declaration (tampering or corruption)."""
     return record.content_hash == question_content_hash(record)
+# -- AS-2: fact-driven research scanners and the declared precedence -----------
+#
+# The research agenda is FACT-DRIVEN: four deterministic scanners translate
+# existing fact gaps into question candidates — they invent nothing, they
+# read no outcomes beyond the FAILURE facts (anomaly), and they never rank
+# models or questions by quality. The agenda's order is a DECLARED
+# deterministic precedence (anomaly first — the loop must face refuting
+# evidence before it may look for confirmations), never a computed score.
+
+@dataclass(frozen=True)
+class QuestionCandidate:
+    """A fact-gap translated into a declarable question — the exact
+    arguments of ``KnowledgeBase.declare_question``, produced by a
+    scanner. Pure data: no score, no priority, no urgency."""
+
+    kind: str
+    source_fact_type: str
+    source_ids: tuple[str, ...]
+    question: str
+
+
+# The declared deterministic precedence of the research agenda (anomaly
+# first, by design: refuting facts outrank confirmation-seeking). This is
+# a DECLARED constant, auditable and fixed — never a computed ranking.
+RESEARCH_PRECEDENCE = (
+    "anomaly",
+    "untested_generality",
+    "undefined_concept",
+    "unverified_identity",
+)
+
+
+def order_research_candidates(
+        candidates: tuple[QuestionCandidate, ...]) -> tuple[QuestionCandidate, ...]:
+    """Order candidates by the declared precedence, then by source ids.
+
+    Pure and deterministic: the same candidates always order identically,
+    regardless of discovery order or any verdict content.
+    """
+    rank = {kind: index for index, kind in enumerate(RESEARCH_PRECEDENCE)}
+    return tuple(sorted(
+        candidates,
+        key=lambda candidate: (rank.get(candidate.kind, len(rank)),
+                               candidate.source_ids,
+                               candidate.question)))
+
+
+def scan_untested_generality(
+        relation_evidences: tuple[tuple[RelationRecord, RelationEvidence], ...],
+        ) -> tuple[QuestionCandidate, ...]:
+    """Relations with training facts but NO held-out facts yet.
+
+    A relation that never left its training scope is an untested
+    generalization — the gap declares itself. A relation with no training
+    pairs at all is not scanned (there is nothing yet to generalize).
+    """
+    candidates: list[QuestionCandidate] = []
+    for relation, evidence in relation_evidences:
+        if evidence.training_pairs and not evidence.heldout_pairs:
+            candidates.append(QuestionCandidate(
+                kind="untested_generality",
+                source_fact_type="relation_evidence",
+                source_ids=(relation.relation_id,),
+                question=(f"does relation {relation.relation_id} "
+                          f"({relation.formula}) generalize beyond its "
+                          "declared training scope?"),
+            ))
+    return tuple(candidates)
+
+
+def scan_anomaly(
+        model_standings: tuple[tuple[ModelRecord, CompetitionState], ...],
+        ) -> tuple[QuestionCandidate, ...]:
+    """Models carrying REFUTED or CONFLICTED verdicts — the adversarial
+    scanner: failures demand investigation before confirmation-seeking."""
+    candidates: list[QuestionCandidate] = []
+    for model, state in model_standings:
+        if state.refuted_count > 0 or state.conflicts:
+            candidates.append(QuestionCandidate(
+                kind="anomaly",
+                source_fact_type="competition_state",
+                source_ids=(model.model_id,),
+                question=(f"why does model {model.model_id} carry refuted "
+                          "or conflicted verdicts?"),
+            ))
+    return tuple(candidates)
+
+
+def scan_undefined_concept(
+        claim_status: tuple[tuple[str, bool], ...],
+        ) -> tuple[QuestionCandidate, ...]:
+    """Claims that appear in predictions but have no active operational
+    definition — vocabulary gaps declared by the AI's own usage.
+
+    ``claim_status`` carries (claim, has_active_definition) facts.
+    """
+    candidates: list[QuestionCandidate] = []
+    for claim, defined in claim_status:
+        if not defined:
+            candidates.append(QuestionCandidate(
+                kind="undefined_concept",
+                source_fact_type="predictions_for_concept",
+                source_ids=(claim,),
+                question=(f"what does the claim {claim!r} mean "
+                          "operationally?"),
+            ))
+    return tuple(candidates)
+
+
+def scan_unverified_identity(
+        models_with_verifications: tuple[tuple[ModelRecord, int], ...],
+        ) -> tuple[QuestionCandidate, ...]:
+    """Registered models with ZERO verifications — an identity that has
+    never faced an experiment. ``models_with_verifications`` carries
+    (model, verification_count) facts."""
+    candidates: list[QuestionCandidate] = []
+    for model, verification_count in models_with_verifications:
+        if verification_count == 0:
+            candidates.append(QuestionCandidate(
+                kind="unverified_identity",
+                source_fact_type="model_lineage",
+                source_ids=(model.model_id,),
+                question=(f"does model {model.model_id} predict at all? "
+                          "(no verification exists)"),
+            ))
+    return tuple(candidates)
 
 
