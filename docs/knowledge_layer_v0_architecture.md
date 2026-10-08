@@ -230,6 +230,7 @@ Engine）、概念发现（Concept Discovery）、LawRecord 退役。
 | KL-2 | `DefinitionRecord` + `define_concept` (atomic revision, single active per concept) + `active_definition` / `definitions_for_procedure`; concept_id snake_case discipline; loader refuses newer files | v5 |
 | KL-3 | `RelationRecord` (subject/formula/parameters_ref/scope) + `RelationEvidence` pure derivation (local vs held-out split, fact counts); rivals coexist; no established | v6 |
 | KL-4 | `ModelLineage` + `model_lineage` / `predictions_for_model` / `predictions_for_concept` — pure reference resolution (model→predictions→verifications, concept→predictions); schema unchanged | v6 |
+| HP | `propose_held_out_condition` + `run_held_out_trial` (agent) — the generalization-trial discipline: deterministic caller-order selection over the scope/tested complement, commit-before-execute, verdicts via the existing chain; held-out is a design boundary, not an evaluation; schema unchanged | v6 |
 Lineage chains are id references end to end; every derivation is pure
 (no writes, deterministic); no score/ranking/winner/confidence exists in
 the layer. Next (separately authorized): held-out prediction, autonomy.

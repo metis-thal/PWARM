@@ -15,6 +15,7 @@ executes them, the AI observes results. The agent's only data channel is
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 from .budget import ExperimentBudget
 from .designer import ExperimentDesigner
@@ -23,6 +24,7 @@ from .experiments import REGISTRY
 from .hypothesis import Hypothesis, Verification, fit_free_fall, verify
 from .instrument import InstrumentCatalog, analyze_gap
 from .knowledge import KnowledgeBase
+from .knowledge_records import RelationRecord
 from .mission import Mission, MissionReport
 from .planner import ExperimentPlanner
 from .prediction import (
@@ -91,6 +93,22 @@ def proposal_to_spec(proposal: ConditionComparison,
             f"parameters; valid: {sorted(_SPEC_CONDITIONS)}")
     return ExperimentSpec(kind=kind, **conditions)
 
+
+@dataclass(frozen=True)
+class HeldOutTrial:
+    """The transient result of one held-out trial — a convenience handle,
+    not a record: every fact (commitments, verifications, the relation's
+    derived evidence) lives in the ledger.
+
+    ``experiment_id`` is the trial's condition identity; ``committed`` are
+    the predictions (one per model, contract-complete); ``verifications``
+    are the persisted verdicts, one per committed prediction.
+    """
+
+    relation_id: str
+    experiment_id: str
+    committed: tuple
+    verifications: tuple
 
 class ScientistAgent:
     """An autonomous scientist working in an unknown universe."""
@@ -221,6 +239,102 @@ class ScientistAgent:
                     observed=verification.observed,
                     predicted=prediction.predicted,
                     tolerance=prediction.tolerance)
+
+    # -- Held-out prediction: the generalization-testing discipline ----------
+    #
+    # "held-out" is an EXPERIMENT-DESIGN boundary, not a model evaluation:
+    # a condition is held-out when its experiment id lies OUTSIDE the
+    # relation's declared training scope and has not been tested for the
+    # relation's model yet. Selection is deterministic caller-order — it
+    # never ranks by expected success (no disagreement ranking here), and
+    # it cannot consult outcomes because nothing has run when it chooses.
+
+    def propose_held_out_condition(
+            self, models: Sequence[ScientificModel],
+            relation: RelationRecord,
+            candidate_conditions: Sequence[dict[str, float]],
+            kind: str,
+            binding: ConditionBinding | None = None,
+            ) -> ConditionComparison | None:
+        """Propose the first NOVEL held-out condition from the pool.
+
+        A candidate qualifies when its experiment id is OUTSIDE the
+        relation's declared scope (a scope member is a training condition,
+        never held-out) and has not been tested for the relation's model
+        (re-testing adds no independent evidence). Candidates are tried in
+        the caller's order — deterministic, never ranked by expected
+        success; the pool is the caller's design freedom, the discipline
+        is this filter.
+
+        Zero writes: the proposal commits nothing and runs no physics.
+        Returns None honestly when the pool holds no qualifying condition.
+        """
+        tested = self.knowledge.evidence_for_model(
+            relation.parameters_ref).experiment_ids
+        for conditions in candidate_conditions:
+            ordered = tuple(sorted(conditions.items()))
+            spec = proposal_to_spec(
+                ConditionComparison(conditions=ordered, predictions=(),
+                                    disagreement=0.0),
+                kind, binding)
+            if spec.id in relation.scope:
+                continue                  # training condition, not held-out
+            if spec.id in tested:
+                continue                  # already tested for this model
+            predictions = tuple(
+                (model.model_id, model_prediction(model, conditions))
+                for model in models)
+            values = [prediction.value for _, prediction in predictions]
+            return ConditionComparison(
+                conditions=ordered,
+                predictions=predictions,
+                disagreement=(max(values) - min(values)) if values else 0.0,
+            )
+        return None
+
+    def run_held_out_trial(
+            self, models: Sequence[ScientificModel],
+            relation: RelationRecord,
+            candidate_conditions: Sequence[dict[str, float]],
+            kind: str,
+            binding: ConditionBinding | None = None,
+            tolerances: Mapping[str, float] | None = None,
+            output_binding: OutputBinding | None = None,
+            output: str | None = None,
+            reduction: ObservationReduction | None = None,
+            ) -> HeldOutTrial | None:
+        """One disciplined generalization trial, reusing the existing chain:
+        propose a novel held-out condition, commit EVERY model's prediction
+        BEFORE running, execute once, verify independently.
+
+        The relation's own model must be among ``models`` — otherwise the
+        verdicts could never enter the relation's evidence (refused). A
+        pool with no novel held-out condition returns None honestly with
+        nothing committed. All facts land in the ledger; the returned
+        :class:`HeldOutTrial` is a transient handle.
+        """
+        if relation.parameters_ref not in {m.model_id for m in models}:
+            raise ValueError(
+                f"the relation's model {relation.parameters_ref!r} must be "
+                "among the trial's models — otherwise its verdicts could "
+                "never enter the relation's evidence")
+        proposal = self.propose_held_out_condition(
+            models, relation, candidate_conditions, kind, binding)
+        if proposal is None:
+            return None
+        committed = self.commit_discriminating_predictions(
+            models, proposal, kind, tolerances=tolerances, binding=binding,
+            output_binding=output_binding, output=output,
+            reduction=reduction)
+        observation = self.execute_proposal(proposal, kind, binding=binding)
+        verifications = self.verify_competing_predictions(
+            committed, observation, output_binding, output, reduction)
+        return HeldOutTrial(
+            relation_id=relation.relation_id,
+            experiment_id=proposal_to_spec(proposal, kind, binding).id,
+            committed=tuple(committed),
+            verifications=tuple(verifications),
+        )
 
     # -- Model Competition Step 3: the AI proposes, physics will execute ----
 

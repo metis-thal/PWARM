@@ -56,7 +56,7 @@ from pwarm.scientist import models as models_module
 from pwarm.scientist import prediction as prediction_module
 from pwarm.scientist import records as records_module
 from pwarm.scientist import state as state_module
-from pwarm.scientist.agent import proposal_to_spec
+from pwarm.scientist.agent import HeldOutTrial, proposal_to_spec
 from pwarm.scientist.knowledge import SCHEMA_VERSION
 from pwarm.scientist.knowledge_records import (
     DefinitionRecord,
@@ -4430,5 +4430,237 @@ def _quadratic_contract():
         "output": "y",
         "reduction": ObservationReduction(channel="z", rule="first"),
     }
+# -- Held-out Prediction HP-1: the condition proposal filter --------------------
+#
+# held-out is an experiment-design boundary, not a model evaluation. The
+# proposal filter is deterministic caller-order: it excludes the relation's
+# training scope and already-tested conditions, and it CANNOT consult
+# outcomes — nothing has run when it chooses, and it writes nothing.
+
+_HP_MODEL = {"model_id": "quadratic", "params": {"k": 1.0}}
+
+
+def _commit_and_verify_quadratic_at(agent, knowledge, x):
+    """Establish one verification for the quadratic model at condition x."""
+    model = ScientificModel(**_HP_MODEL)
+    proposal = ConditionComparison(
+        conditions=(("x", x),), predictions=(), disagreement=0.0)
+    contract = _quadratic_contract()
+    committed = agent.commit_discriminating_predictions(
+        (model,), proposal, kind="drop", **contract)
+    observation = agent.execute_proposal(
+        proposal, kind="drop", binding=contract["binding"])
+    agent.verify_competing_predictions(
+        committed, observation, contract["output_binding"],
+        contract["output"], contract["reduction"])
+
+
+def _relation_on_quadratic(knowledge, scope=("drop_h1_m1",)):
+    return knowledge.declare_relation(
+        subject="z_first", formula="z_first = drop_height^2",
+        parameters_ref="quadratic", scope=scope,
+        declared_by="candidate generalization")
+
+
+def test_propose_held_out_excludes_scope_and_tested(lab, tmp_path):
+    """Scope members are training conditions (never held-out); already
+    tested conditions add no independent evidence (also excluded); the
+    first novel held-out condition in caller order is proposed."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    _commit_and_verify_quadratic_at(agent, knowledge, 1.0)   # in-scope, tested
+    _commit_and_verify_quadratic_at(agent, knowledge, 2.0)   # out-of-scope, tested
+    relation = _relation_on_quadratic(knowledge)
+
+    binding = ConditionBinding({"x": "drop_height"})
+    assert agent.propose_held_out_condition(
+        (), relation, [{"x": 1.0}], kind="drop", binding=binding) is None
+    assert agent.propose_held_out_condition(
+        (), relation, [{"x": 2.0}], kind="drop", binding=binding) is None
+
+    proposal = agent.propose_held_out_condition(
+        (), relation, [{"x": 1.0}, {"x": 2.0}, {"x": 5.0}], kind="drop",
+        binding=binding)
+    assert proposal is not None
+    assert proposal.conditions == (("x", 5.0),)               # the novel one
+
+
+def test_propose_held_out_is_deterministic_caller_order_not_ranking(lab, tmp_path):
+    """Selection follows the CALLER's order — never a disagreement ranking.
+    Two models with DIFFERENT spreads: ranking by disagreement would pick
+    x=10 (spread 90) first; caller-order picks x=5. Reversing the pool
+    reverses the pick."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    _commit_and_verify_quadratic_at(agent, knowledge, 1.0)
+    relation = _relation_on_quadratic(knowledge)
+    models = (ScientificModel(**_HP_MODEL),
+              ScientificModel(model_id="linear", params={"k": 1.0}))
+
+    binding = ConditionBinding({"x": "drop_height"})
+    first = agent.propose_held_out_condition(
+        models, relation, [{"x": 5.0}, {"x": 10.0}], kind="drop",
+        binding=binding)
+    second = agent.propose_held_out_condition(
+        models, relation, [{"x": 10.0}, {"x": 5.0}], kind="drop",
+        binding=binding)
+
+    assert first.conditions == (("x", 5.0),)      # caller order: x=5 wins
+    assert first.disagreement == 20.0             # 25 - 5, carried not used
+    assert second.conditions == (("x", 10.0),)    # reversed pool, reversed pick
+    assert second.disagreement == 90.0            # 100 - 10: a ranker would
+    # have picked x=10 first — the pick provably ignored the spread
+
+
+def test_propose_held_out_knows_no_outcome(lab, tmp_path):
+    """The selection cannot consult outcomes: it works on a store with NO
+    verifications at all, it never calls physics, and it writes nothing."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    relation = _relation_on_quadratic(knowledge)
+    calls: list[ExperimentSpec] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        calls.append(spec)
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    snapshot = knowledge.path.read_text(encoding="utf-8")
+
+    proposal = agent.propose_held_out_condition(
+        (ScientificModel(**_HP_MODEL),), relation, [{"x": 5.0}], kind="drop",
+        binding=ConditionBinding({"x": "drop_height"}))
+
+    assert proposal is not None
+    assert calls == []                                    # physics never ran
+    assert knowledge.path.read_text(encoding="utf-8") == snapshot  # zero writes
+    assert knowledge.predictions == {} and knowledge.verifications == {}
+    # and the proposal carries the models' PRE-experimental predictions
+    assert proposal.predictions[0][0] == "quadratic"
+    assert proposal.predictions[0][1].value == 25.0       # 5^2, before any run
+
+
+def test_propose_held_out_pool_exhausted_is_honest_none(lab, tmp_path):
+    """Empty pool, all-in-scope pool, all-tested pool — all return None
+    with nothing committed; never a silent reuse of a training condition."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    _commit_and_verify_quadratic_at(agent, knowledge, 1.0)
+    relation = _relation_on_quadratic(knowledge)
+
+    store_before = (dict(knowledge.predictions), dict(knowledge.verifications))
+    assert agent.propose_held_out_condition(
+        (), relation, [], kind="drop",
+        binding=ConditionBinding({"x": "drop_height"})) is None
+    assert agent.propose_held_out_condition(
+        (), relation, [{"x": 1.0}], kind="drop",
+        binding=ConditionBinding({"x": "drop_height"})) is None
+    assert (dict(knowledge.predictions), dict(knowledge.verifications))         == store_before    # the honest None committed nothing
+
+
+# -- Held-out Prediction HP-2: the trial closed loop ----------------------------
+#
+# run_held_out_trial composes the existing chain (propose -> commit BEFORE
+# execute -> verify) under the held-out discipline. All facts land in the
+# ledger; RelationEvidence then shows the local/held-out separation without
+# any new wiring.
+
+def test_held_out_trial_requires_the_relations_model(lab, tmp_path):
+    """The relation's own model must be among the trial's models — otherwise
+    its verdicts could never enter the relation's evidence (refused)."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    relation = _relation_on_quadratic(knowledge)      # quadratic's relation
+    with pytest.raises(ValueError, match="must be among the trial's models"):
+        agent.run_held_out_trial(
+            (ScientificModel(model_id="linear", params={"k": 1.0}),),
+            relation, [{"x": 5.0}], kind="drop", **_quadratic_contract())
+    assert knowledge.predictions == {}                # nothing slipped through
+
+
+def test_held_out_trial_commits_before_execution(lab, tmp_path):
+    """The temporal discipline holds inside the trial: every commitment is
+    persisted BEFORE physics runs."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    relation = _relation_on_quadratic(knowledge)
+    events: list[tuple[str, int]] = []
+    real_run = agent.laboratory.run_experiment
+
+    def spy_run(spec):
+        events.append(("experiment", len(knowledge.predictions)))
+        return real_run(spec)
+
+    agent.laboratory.run_experiment = spy_run
+    model = ScientificModel(**_HP_MODEL)
+    real_commit = agent.commit_discriminating_predictions
+
+    def spy_commit(models, proposal, kind, **kwargs):
+        records = real_commit(models, proposal, kind, **kwargs)
+        events.append(("commit", len(knowledge.predictions)))
+        return records
+
+    agent.commit_discriminating_predictions = spy_commit
+    trial = agent.run_held_out_trial(
+        (model,), relation, [{"x": 5.0}], kind="drop", **_quadratic_contract())
+
+    assert trial is not None
+    assert events == [("commit", 1), ("experiment", 1)]
+
+
+def test_held_out_trial_end_to_end_fact_separation(lab, tmp_path):
+    """The full discipline in one breath: training verified inside the scope
+    (x=1 confirmed), one held-out trial outside it (x=5 refuted for
+    quadratic k=1) — and RelationEvidence shows the fact separation with
+    zero extra wiring."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    _commit_and_verify_quadratic_at(agent, knowledge, 1.0)   # training, confirmed
+    relation = _relation_on_quadratic(knowledge)
+
+    trial = agent.run_held_out_trial(
+        (ScientificModel(**_HP_MODEL),), relation, [{"x": 5.0}],
+        kind="drop", **_quadratic_contract())
+
+    assert trial is not None
+    assert trial.relation_id == relation.relation_id
+    assert trial.experiment_id == "drop_h5_m1"
+    assert len(trial.committed) == 1 and len(trial.verifications) == 1
+    assert all(v.status == "refuted" for v in trial.verifications)
+
+    evidence = knowledge.relation_evidence(relation)
+    assert evidence.training_confirmed_count == 1
+    assert evidence.training_refuted_count == 0
+    assert evidence.heldout_refuted_count == 1
+    assert evidence.heldout_confirmed_count == 0
+    assert evidence.distinct_training_conditions == ("drop_h1_m1",)
+    assert evidence.distinct_heldout_conditions == ("drop_h5_m1",)
+    # lineage resolves the held-out prediction too
+    lineage = knowledge.model_lineage("quadratic")
+    assert len(lineage.predictions) == 2
+
+
+def test_held_out_trial_pool_exhausted_zero_commit(lab, tmp_path):
+    """After one trial the pool's condition is tested: a repeated call is
+    an honest None with zero new commitments."""
+    knowledge, agent = _trial_setup(lab, tmp_path)
+    relation = _relation_on_quadratic(knowledge)
+    model = ScientificModel(**_HP_MODEL)
+
+    first = agent.run_held_out_trial(
+        (model,), relation, [{"x": 5.0}], kind="drop", **_quadratic_contract())
+    assert first is not None
+    store_after_first = len(knowledge.predictions)
+
+    second = agent.run_held_out_trial(
+        (model,), relation, [{"x": 5.0}], kind="drop", **_quadratic_contract())
+
+    assert second is None                        # the condition is now tested
+    assert len(knowledge.predictions) == store_after_first
+
+
+def test_held_out_trial_structure_pin():
+    """The trial handle is structural only: ids plus references to the
+    ledger's own records — no evaluation field can appear."""
+    assert [f.name for f in dataclasses.fields(HeldOutTrial)] == [
+        "relation_id", "experiment_id", "committed", "verifications"]
+    forbidden = {"score", "confidence", "accuracy", "winner", "rank",
+                 "weight", "probability", "quality", "established"}
+    assert not any(f.name in forbidden
+                   for f in dataclasses.fields(HeldOutTrial))
 
 

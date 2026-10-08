@@ -650,7 +650,7 @@ Key invariants (structurally enforced by tests):
 
 | module | role |
 |---|---|
-| `agent.py` | The scientific-method loop: predict → commit → execute → verify → learn |
+| `agent.py` | The scientific-method loop: predict → commit → execute → verify → learn; held-out trial discipline (HP) |
 | `knowledge.py` | Civilization knowledge: laws + the append-only commitment/verification ledger + evidence aggregation |
 | `prediction.py` | Genesis core facade (re-export shim): the implementation lives in `models.py` (candidate models, rival predictions, discriminating ranking, belief translation), `contracts.py` (both bindings, spec_ref identity format, declared reduction registry), `records.py` (ledger dataclasses + commitment hash) and `adjudication.py` (the single verdict rule + both commitment-honoring adjudication entries) |
 | `knowledge_records.py` | Knowledge entities (KL-1+): `ModelRecord` — addressable, hash-anchored model identities; `DefinitionRecord` (KL-2) — operational concept definitions (channel + reduction rule + unit), lookup-only vocabulary; `RelationRecord` + `RelationEvidence` (KL-3) — declared candidate generalizations whose local/held-out standing is purely derived from the ledger; `ModelLineage` + lineage queries (KL-4) — pure reference resolution (model→predictions→verifications, concept→predictions); declared facts, never evaluations |
