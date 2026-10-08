@@ -10,6 +10,12 @@ Two kinds of declared facts live here, both strictly NON-evaluative:
   not truth. It is referenced for LOOKUP only — it can never become a
   source for VerificationRecords (P1-4's frozen contracts remain the sole
   adjudication basis) and never carries verdict-shaped data.
+* :class:`RelationRecord` (KL-3) — a DECLARED candidate generalization
+  (subject concept, formula, instantiating model, training scope). Its
+  scientific content is never stored: :func:`relation_evidence` derives
+  it from the ledger, splitting verifications into local (in-scope) and
+  generalization (held-out) facts. Counts and condition sets only —
+  never a score, ranking, winner or establishment judgment.
 
 No score, confidence, accuracy, winner or truth value exists in this
 layer; status vocabularies are lifecycle-only.
@@ -20,7 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .records import commitment_hash
+from .records import EvidenceSummary, commitment_hash
 
 
 @dataclass(frozen=True)
@@ -145,3 +151,156 @@ def verify_definition_record(record: DefinitionRecord) -> bool:
     """Recompute the content hash — False means the declared content was
     edited after definition (tampering or corruption)."""
     return record.content_hash == definition_content_hash(record)
+
+
+
+# -- KL-3: candidate relations and their derived evidence ----------------------
+#
+# A RelationRecord is a DECLARATION, not an evaluation: subject concept,
+# candidate formula, instantiating model and the training scope that defines
+# the held-out boundary. Everything science says about it is DERIVED from
+# the ledger by relation_evidence — local (in-scope) vs generalization
+# (held-out) facts, counts and condition sets only.
+
+@dataclass(frozen=True)
+class RelationRecord:
+    """A declared candidate generalization — declaration, not evaluation.
+
+    ``content_hash`` anchors the DECLARED fields (subject, formula,
+    parameters_ref, scope, declared_by); relation_id / created_at /
+    status / supersedes are bookkeeping and stay outside the hash. The
+    scope is the single source of the training / held-out boundary: a
+    verification whose experiment_id is in the scope is LOCAL evidence,
+    one outside it is GENERALIZATION evidence.
+
+    Status is lifecycle-only (candidate | superseded) — there is no
+    "established": whether a relation generalizes is a fact question
+    answered by :class:`RelationEvidence`, never a stored judgment.
+    Rival candidates coexist by design; ``supersedes`` chains revisions
+    of the SAME relation (same subject and parameters_ref).
+    """
+
+    relation_id: str = ""             # "rel-NNNN" ordinal (bookkeeping)
+    subject: str = ""                 # declared: concept_id of the explained quantity
+    formula: str = ""                 # declared: candidate generalization form
+    parameters_ref: str = ""          # declared: ModelRecord.model_id instantiating it
+    scope: tuple[str, ...] = field(default_factory=tuple)
+    # declared: the training battery's experiment ids — the held-out boundary
+    declared_by: str = ""             # declared provenance
+    created_at: str = ""              # ISO timestamp (informational)
+    status: str = "candidate"         # candidate | superseded
+    supersedes: str = ""              # relation_id this declaration revises
+    content_hash: str = ""
+
+
+def relation_payload(record: RelationRecord) -> dict:
+    """The tamper-evident content of a relation declaration: the declared
+    fields only (bookkeeping stays outside the hash)."""
+    return {
+        "subject": record.subject,
+        "formula": record.formula,
+        "parameters_ref": record.parameters_ref,
+        "scope": list(record.scope),
+        "declared_by": record.declared_by,
+    }
+
+
+def relation_content_hash(record: RelationRecord) -> str:
+    """sha256 over the declared fields (deterministic serialization)."""
+    return commitment_hash(relation_payload(record))
+
+
+def verify_relation_record(record: RelationRecord) -> bool:
+    """Recompute the content hash — False means the declared content was
+    edited after declaration (tampering or corruption)."""
+    return record.content_hash == relation_content_hash(record)
+
+
+@dataclass(frozen=True)
+class RelationPair:
+    """One (prediction, experiment) verification projected to ids plus the
+    single fact used for counting: the status, taken from the referenced
+    VerificationRecord — no residual or evidence text is copied."""
+
+    prediction_id: str
+    experiment_id: str
+    verification_id: str
+    status: str                       # confirmed | refuted (from the ledger)
+
+
+@dataclass(frozen=True)
+class RelationEvidence:
+    """The DERIVED standing of a relation — pure projection of ledger
+    facts, never persisted, never written into any schema.
+
+    Every count is a fact (how many verifications say what); every
+    condition set is a fact (which experiments were tried). There is no
+    score, ranking, winner, confidence, establishment or quality here —
+    whether the relation generalizes is read directly from the held-out
+    facts by whoever consumes this view.
+    """
+
+    relation_id: str
+    parameters_ref: str
+    scope: tuple[str, ...]                        # the declared boundary, echoed
+    training_pairs: tuple[RelationPair, ...]      # experiment_id ∈ scope
+    heldout_pairs: tuple[RelationPair, ...]       # experiment_id ∉ scope
+    training_confirmed_count: int
+    training_refuted_count: int
+    heldout_confirmed_count: int
+    heldout_refuted_count: int
+    distinct_training_conditions: tuple[str, ...]  # sorted experiment ids
+    distinct_heldout_conditions: tuple[str, ...]   # sorted experiment ids
+
+
+def relation_evidence(relation: RelationRecord,
+                      evidence: EvidenceSummary) -> RelationEvidence:
+    """Derive a relation's evidence view from its model's ledger summary.
+
+    Pure function of (declaration, ledger-derived summary): each
+    independent (prediction, experiment) pair — the representative
+    verification, in verification-id order, exactly as
+    ``EvidenceSummary.independent_evidence`` defines it — is classified
+    by ``experiment_id ∈ relation.scope`` into LOCAL (training) or
+    GENERALIZATION (held-out) evidence. Confirmed/refuted come only from
+    the referenced VerificationRecords; pairs without a verification
+    contribute nothing. No writes, no randomness: repeated calls on an
+    unchanged store return equal values.
+    """
+    training: list[RelationPair] = []
+    heldout: list[RelationPair] = []
+    scope = tuple(relation.scope)
+    for verification in evidence.independent_evidence:
+        pair = RelationPair(
+            prediction_id=verification.prediction_id,
+            experiment_id=verification.experiment_id,
+            verification_id=verification.verification_id,
+            status=verification.status,
+        )
+        if verification.experiment_id in scope:
+            training.append(pair)
+        else:
+            heldout.append(pair)
+    return RelationEvidence(
+        relation_id=relation.relation_id,
+        parameters_ref=relation.parameters_ref,
+        scope=scope,
+        training_pairs=tuple(training),
+        heldout_pairs=tuple(heldout),
+        training_confirmed_count=_count_status(training, "confirmed"),
+        training_refuted_count=_count_status(training, "refuted"),
+        heldout_confirmed_count=_count_status(heldout, "confirmed"),
+        heldout_refuted_count=_count_status(heldout, "refuted"),
+        distinct_training_conditions=_distinct_conditions(training),
+        distinct_heldout_conditions=_distinct_conditions(heldout),
+    )
+
+
+def _count_status(pairs: list[RelationPair], status: str) -> int:
+    return sum(1 for pair in pairs if pair.status == status)
+
+
+def _distinct_conditions(pairs: list[RelationPair]) -> tuple[str, ...]:
+    return tuple(sorted({pair.experiment_id for pair in pairs}))
+
+

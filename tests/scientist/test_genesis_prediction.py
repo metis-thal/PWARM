@@ -61,8 +61,12 @@ from pwarm.scientist.knowledge import SCHEMA_VERSION
 from pwarm.scientist.knowledge_records import (
     DefinitionRecord,
     ModelRecord,
+    RelationEvidence,
+    RelationRecord,
+    relation_evidence,
     verify_definition_record,
     verify_model_record,
+    verify_relation_record,
 )
 
 # Every module carrying Genesis adjudication logic (P2-9 split the facade
@@ -558,7 +562,7 @@ def test_pre_phase1_knowledge_files_remain_valid(tmp_path):
     knowledge.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 5   # v5: + DefinitionRecord (KL-2)
+    assert data["schema_version"] == 6   # v6: + RelationRecord (KL-3)
     assert data["laws"][0]["name"] == "gravity"
     assert data["predictions"] == [] and data["verifications"] == []
 
@@ -3677,7 +3681,7 @@ def test_pre_kl1_model_refs_are_never_migrated_or_merged(tmp_path):
     reloaded.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 5
+    assert data["schema_version"] == 6
     assert data["predictions"][0]["model_ref"] == "model linear"  # untouched
 
     final = KnowledgeBase(path, universe="universe_001")
@@ -3925,7 +3929,7 @@ def test_v4_store_loads_and_upgrades_to_v5(tmp_path):
     reloaded.save()
 
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 5
+    assert data["schema_version"] == 6
     assert data["predictions"][0]["model_ref"] == "linear"
     assert data["model_records"][0]["model_id"] == "linear"
     assert data["definitions"][0]["concept_id"] == "z_first"
@@ -3946,3 +3950,347 @@ def test_loader_refuses_newer_schema(tmp_path):
 
     with pytest.raises(ValueError, match="newer than this program's"):
         KnowledgeBase(path, universe="universe_001")
+# -- Knowledge Layer KL-3: candidate relations and derived evidence ------------
+#
+# A RelationRecord is a declaration (subject/formula/model/scope), never an
+# evaluation. Its standing is RelationEvidence — a pure derivation over the
+# ledger that splits verifications into LOCAL (in-scope) and GENERALIZATION
+# (held-out) facts. Counts and condition sets only: no score, ranking,
+# winner, confidence, establishment or quality field can exist.
+
+def _declare_quadratic_relation(knowledge, scope):
+    return knowledge.declare_relation(
+        subject="z_first", formula="z_first = drop_height^2",
+        parameters_ref="quadratic", scope=scope,
+        declared_by="candidate generalization")
+
+
+def test_relation_record_schema_is_facts_not_scores():
+    """Field and status pins: declared facts plus bookkeeping only — no
+    score, confidence, winner, establishment or quality field can ever
+    appear; status is lifecycle-only (candidate | superseded)."""
+    assert [f.name for f in dataclasses.fields(RelationRecord)] == [
+        "relation_id", "subject", "formula", "parameters_ref", "scope",
+        "declared_by", "created_at", "status", "supersedes", "content_hash"]
+    assert [f.name for f in dataclasses.fields(RelationEvidence)] == [
+        "relation_id", "parameters_ref", "scope", "training_pairs",
+        "heldout_pairs", "training_confirmed_count", "training_refuted_count",
+        "heldout_confirmed_count", "heldout_refuted_count",
+        "distinct_training_conditions", "distinct_heldout_conditions"]
+    forbidden = {"score", "confidence", "accuracy", "winner", "rank",
+                 "weight", "probability", "quality", "established",
+                 "fitness", "truth"}
+    assert not any(f.name in forbidden
+                   for f in dataclasses.fields(RelationRecord))
+    assert not any(f.name in forbidden
+                   for f in dataclasses.fields(RelationEvidence))
+
+
+def test_relation_declaration_freezes_and_round_trips(tmp_path):
+    """The declared content is hash-anchored and survives save/reload."""
+    knowledge = _identity_knowledge(tmp_path)
+    _register_rival_models(knowledge)
+    record = _declare_quadratic_relation(knowledge, scope=("drop_h1_m1",))
+
+    assert record.status == "candidate"
+    assert record.scope == ("drop_h1_m1",)
+    assert record.supersedes == ""
+    assert verify_relation_record(record)
+
+    reloaded = KnowledgeBase(knowledge.path, universe="universe_001")
+    stored = reloaded.relation(record.relation_id)
+    assert stored is not None
+    assert stored.formula == "z_first = drop_height^2"
+    assert stored.scope == ("drop_h1_m1",)
+    assert verify_relation_record(stored)
+
+
+def test_relation_declared_content_tamper_detected(tmp_path):
+    """Editing any DECLARED field breaks the content hash; bookkeeping
+    edits do not."""
+    knowledge = _identity_knowledge(tmp_path)
+    _register_rival_models(knowledge)
+    record = _declare_quadratic_relation(knowledge, scope=("drop_h1_m1",))
+
+    assert not verify_relation_record(replace(record, subject="z_last"))
+    assert not verify_relation_record(replace(record, formula="z = h"))
+    assert not verify_relation_record(replace(record, parameters_ref="linear"))
+    assert not verify_relation_record(replace(record, scope=("drop_h2_m1",)))
+    assert not verify_relation_record(replace(record, declared_by="other"))
+    # bookkeeping is outside the hash
+    assert verify_relation_record(replace(record, status="superseded"))
+    assert verify_relation_record(replace(record, supersedes="rel-0000"))
+
+
+def test_relation_declaration_validation(tmp_path):
+    """Declaration validation: subject format, registered model, non-empty
+    duplicate-free scope, non-empty formula — all refused loudly."""
+    knowledge = _identity_knowledge(tmp_path)
+    _register_rival_models(knowledge)
+    with pytest.raises(ValueError, match="concept identity"):
+        knowledge.declare_relation(
+            "Z First", "f", "quadratic", scope=("drop_h1_m1",))
+    with pytest.raises(ValueError, match="needs a formula"):
+        knowledge.declare_relation(
+            "z_first", "", "quadratic", scope=("drop_h1_m1",))
+    with pytest.raises(ValueError, match="not a registered model"):
+        knowledge.declare_relation(
+            "z_first", "f", "unregistered", scope=("drop_h1_m1",))
+    with pytest.raises(ValueError, match="non-empty training scope"):
+        knowledge.declare_relation("z_first", "f", "quadratic", scope=())
+    with pytest.raises(ValueError, match="must be unique"):
+        knowledge.declare_relation(
+            "z_first", "f", "quadratic",
+            scope=("drop_h1_m1", "drop_h1_m1"))
+    with pytest.raises(ValueError, match="non-empty experiment ids"):
+        knowledge.declare_relation(
+            "z_first", "f", "quadratic", scope=("drop_h1_m1", ""))
+
+
+def test_relation_declaration_against_superseded_model_refused(tmp_path):
+    """A withdrawn model identity cannot ground new relations (mirrors the
+    commitment rule); an existing relation is untouched by later model
+    supersession — its evidence keeps deriving from the ledger."""
+    knowledge = _identity_knowledge(tmp_path)
+    _register_rival_models(knowledge)
+    relation = _declare_quadratic_relation(knowledge, scope=("drop_h1_m1",))
+    knowledge.register_model("quadratic-v2", "y = k*x^2", {"k": 1.0})
+    knowledge.supersede_model("quadratic", "quadratic-v2")
+
+    with pytest.raises(ValueError, match="superseded"):
+        knowledge.declare_relation(
+            "z_first", "f", "quadratic", scope=("drop_h1_m1",))
+    assert knowledge.relation(relation.relation_id).status == "candidate"
+
+
+def test_relation_revision_is_atomic(tmp_path):
+    """A revision (same subject AND model) closes the old candidate and
+    creates the new one in one step; rivals with different subjects or
+    models are separate candidates, not revisions."""
+    knowledge = _identity_knowledge(tmp_path)
+    _register_rival_models(knowledge)
+    v1 = _declare_quadratic_relation(knowledge, scope=("drop_h1_m1",))
+    v2 = knowledge.declare_relation(
+        subject="z_first", formula="z_first = drop_height^2 (v2)",
+        parameters_ref="quadratic", scope=("drop_h1_m1", "drop_h5_m1"),
+        declared_by="scope widening", supersedes=v1.relation_id)
+
+    assert knowledge.relation(v1.relation_id).status == "superseded"
+    assert v2.status == "candidate"
+    assert v2.supersedes == v1.relation_id
+    assert verify_relation_record(v1) and verify_relation_record(v2)
+
+    with pytest.raises(ValueError, match="unknown relation"):
+        knowledge.declare_relation(
+            "z_first", "f", "quadratic", scope=("drop_h1_m1",),
+            supersedes="rel-9999")
+    with pytest.raises(ValueError, match="only a candidate"):
+        knowledge.declare_relation(
+            "z_first", "f", "quadratic", scope=("drop_h1_m1",),
+            supersedes=v1.relation_id)                    # already closed
+    with pytest.raises(ValueError, match="rival candidate"):
+        knowledge.declare_relation(
+            "z_last", "f", "quadratic", scope=("drop_h1_m1",),
+            supersedes=v2.relation_id)                    # cross-subject
+    with pytest.raises(ValueError, match="rival candidate"):
+        knowledge.declare_relation(
+            "z_first", "f", "linear", scope=("drop_h1_m1",),
+            supersedes=v2.relation_id)                    # cross-model
+
+
+def test_relation_evidence_pure_derivation_writes_nothing(lab, tmp_path):
+    """Deriving evidence never writes: no save, no schema growth, and
+    repeated derivations are equal. The evidence view is not persisted
+    anywhere in the store."""
+    knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    _verify_rivals(agent, records, observation)
+    relation = knowledge.declare_relation(
+        subject="z_first", formula="z_first = drop_height",
+        parameters_ref="linear", scope=("drop_h5_m1",))
+    before = (dict(knowledge.predictions), dict(knowledge.verifications),
+              knowledge.path.read_text(encoding="utf-8"))
+
+    first = knowledge.relation_evidence(relation)
+    second = knowledge.relation_evidence(relation)
+
+    assert first == second
+    assert (dict(knowledge.predictions), dict(knowledge.verifications)) == \
+        before[:2]
+    assert knowledge.path.read_text(encoding="utf-8") == before[2]
+    assert "relations" in json.loads(before[2])           # declaration stored...
+    assert first.relation_id == relation.relation_id      # ...evidence derived
+
+
+def test_relation_evidence_splits_local_and_heldout(lab, tmp_path):
+    """The core capability: the SAME model, verified inside and outside the
+    declared scope, yields separated facts — local confirmation in
+    training_pairs, generalization facts in heldout_pairs, with counts and
+    sorted distinct conditions."""
+    knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    _verify_rivals(agent, records, observation)          # in-scope: drop_h5_m1
+
+    # a second, OUT-OF-SCOPE experiment for the same model (a single
+    # model has zero self-disagreement, so the proposal is hand-built)
+    h1 = ScientificModel(model_id="linear", params={"k": 1.0})
+    proposal = ConditionComparison(
+        conditions=(("x", 2.0),), predictions=(), disagreement=0.0)
+    out_records = agent.commit_discriminating_predictions(
+        (h1,), proposal, kind="drop",
+        tolerances={"linear": 0.01},
+        binding=ConditionBinding({"x": "drop_height"}),
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
+    out_observation = agent.execute_proposal(
+        proposal, kind="drop", binding=ConditionBinding({"x": "drop_height"}))
+    agent.verify_competing_predictions(
+        out_records, out_observation, OutputBinding({"y": "z"}), "y",
+        ObservationReduction(channel="z", rule="first"))
+
+    relation = knowledge.declare_relation(
+        subject="z_first", formula="z_first = drop_height",
+        parameters_ref="linear", scope=("drop_h5_m1",))
+    evidence = knowledge.relation_evidence(relation)
+
+    assert [p.experiment_id for p in evidence.training_pairs] \
+        == ["drop_h5_m1"]
+    assert [p.experiment_id for p in evidence.heldout_pairs] \
+        == ["drop_h2_m1"]
+    assert evidence.training_confirmed_count == 1
+    assert evidence.training_refuted_count == 0
+    assert evidence.heldout_confirmed_count == 1
+    assert evidence.heldout_refuted_count == 0
+    assert evidence.distinct_training_conditions == ("drop_h5_m1",)
+    assert evidence.distinct_heldout_conditions == ("drop_h2_m1",)
+    for pair in evidence.training_pairs + evidence.heldout_pairs:
+        ledger = knowledge.verifications[pair.verification_id]
+        assert ledger.prediction_id == pair.prediction_id
+        assert ledger.experiment_id == pair.experiment_id
+        assert ledger.status == pair.status               # fact projection
+
+
+def test_relation_local_confirmed_heldout_refuted(lab, tmp_path):
+    """The four-questions proof: quadratic (k=1) fits at x=1 (predicted 1,
+    observed ~1) and fails at x=5 (predicted 25, observed ~5). With scope =
+    (drop_h1_m1,), RelationEvidence shows LOCAL confirmation and GENERAL-
+    IZATION refutation — a distinction no earlier structure could express."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    _register_rival_models(knowledge)
+    h2 = ScientificModel(model_id="quadratic", params={"k": 1.0})
+    contract = {
+        "output_binding": OutputBinding({"y": "z"}),
+        "output": "y",
+        "reduction": ObservationReduction(channel="z", rule="first"),
+    }
+    binding = ConditionBinding({"x": "drop_height"})
+
+    for x, experiment_id in ((1.0, "drop_h1_m1"), (5.0, "drop_h5_m1")):
+        proposal = ConditionComparison(
+            conditions=(("x", x),), predictions=(), disagreement=0.0)
+        committed = agent.commit_discriminating_predictions(
+            (h2,), proposal, kind="drop", tolerances={"quadratic": 0.01},
+            binding=binding, **contract)
+        observation = agent.execute_proposal(proposal, kind="drop",
+                                             binding=binding)
+        agent.verify_competing_predictions(
+            committed, observation, OutputBinding({"y": "z"}), "y",
+            ObservationReduction(channel="z", rule="first"))
+
+    relation = knowledge.declare_relation(
+        subject="z_first", formula="z_first = drop_height^2",
+        parameters_ref="quadratic", scope=("drop_h1_m1",))
+    evidence = knowledge.relation_evidence(relation)
+
+    assert evidence.training_confirmed_count == 1          # fits at x=1
+    assert evidence.training_refuted_count == 0
+    assert evidence.heldout_refuted_count == 1             # fails at x=5
+    assert evidence.heldout_confirmed_count == 0
+    assert evidence.distinct_heldout_conditions == ("drop_h5_m1",)
+    assert [p.status for p in evidence.training_pairs] == ["confirmed"]
+    assert [p.status for p in evidence.heldout_pairs] == ["refuted"]
+
+
+def test_relation_evidence_without_verifications_is_empty(lab, tmp_path):
+    """Confirmed/refuted come only from VerificationRecords: predictions
+    without verifications, and unlinked models, contribute nothing."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    _register_rival_models(knowledge)
+    h1, h2 = _rival_pair()
+    proposal = agent.propose_discriminating_experiment((h1, h2), [{"x": 5.0}])
+    agent.commit_discriminating_predictions(
+        (h1, h2), proposal, kind="drop",
+        tolerances={"linear": 0.5, "quadratic": 0.5},
+        binding=ConditionBinding({"x": "drop_height"}),
+        output_binding=OutputBinding({"y": "z"}), output="y",
+        reduction=ObservationReduction(channel="z", rule="first"))
+    relation = knowledge.declare_relation(
+        subject="z_first", formula="f", parameters_ref="linear",
+        scope=("drop_h5_m1",))
+    # committed but never verified
+    evidence = knowledge.relation_evidence(relation)
+    assert evidence.training_pairs == () and evidence.heldout_pairs == ()
+    assert evidence.training_confirmed_count == 0
+    assert evidence.heldout_refuted_count == 0
+
+    unlinked = knowledge.declare_relation(
+        subject="z_other", formula="f", parameters_ref="quadratic",
+        scope=("drop_h5_m1",))
+    empty_summary = knowledge.evidence_for_model("nobody")
+    derived = relation_evidence(unlinked, empty_summary)
+    assert derived.training_pairs == () and derived.heldout_pairs == ()
+
+
+def test_relation_evidence_representative_discipline(tmp_path):
+    """Re-verifying the SAME (prediction, experiment) pair adds one pair,
+    not two — the representative discipline of EvidenceSummary carries
+    over; a second verification with a DIFFERENT verdict is still one
+    pair whose status is the FIRST verification's (deterministic)."""
+    knowledge = _identity_knowledge(tmp_path)
+    pred = knowledge.commit_prediction(
+        model_ref="linear", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5,
+        reduction_channel="z", reduction_rule="first")
+    knowledge.register_model("linear", "y = k*x", {"k": 1.0})
+    relation = knowledge.declare_relation(
+        subject="z_first", formula="f", parameters_ref="linear",
+        scope=("E1",))
+    _verify_with(knowledge, pred, "E1", 5.0, "confirmed")
+    _verify_with(knowledge, pred, "E1", 9.0, "refuted")   # overturned verdict
+
+    evidence = knowledge.relation_evidence(relation)
+
+    assert len(evidence.training_pairs) == 1              # one pair, not two
+    assert evidence.training_pairs[0].status == "confirmed"   # FIRST verdict
+    assert evidence.training_confirmed_count == 1
+    assert evidence.training_refuted_count == 0
+
+
+def test_v5_store_loads_and_upgrades_to_v6(tmp_path):
+    """v5-era files (definitions, no relations key) load unchanged with an
+    empty relation registry; saving upgrades the layout."""
+    path = tmp_path / "v5_store.json"
+    knowledge = KnowledgeBase(path, universe="universe_001")
+    knowledge.define_concept(
+        "gravity", unit="m/s^2", channel="z", reduction_rule="free_fall_g")
+    knowledge.save()
+    v5_data = json.loads(path.read_text(encoding="utf-8"))
+    del v5_data["relations"]                              # simulate v5 file
+    v5_data["schema_version"] = 5
+    path.write_text(json.dumps(v5_data), encoding="utf-8")
+
+    reloaded = KnowledgeBase(path, universe="universe_001")
+    assert reloaded.relations == {}
+    assert reloaded.active_definition("gravity") is not None
+    reloaded.register_model("linear", "y = k*x", {"k": 1.0})
+    reloaded.declare_relation(
+        subject="z_first", formula="f", parameters_ref="linear",
+        scope=("E1",))
+    reloaded.save()
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 6
+    assert data["definitions"][0]["concept_id"] == "gravity"
+    assert data["relations"][0]["subject"] == "z_first"
+
+

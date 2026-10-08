@@ -23,9 +23,15 @@ from .contracts import observation_fields, reduction_rules
 from .knowledge_records import (
     DefinitionRecord,
     ModelRecord,
+    RelationEvidence,
+    RelationRecord,
     definition_content_hash,
     model_content_hash,
+    relation_content_hash,
     validate_concept_id,
+)
+from .knowledge_records import (
+    relation_evidence as derive_relation_evidence,
 )
 from .prediction import (
     CompetitionState,
@@ -42,14 +48,14 @@ from .prediction import (
     competition_state as build_competition_state,
 )
 
-# Schema 5: the Knowledge Layer's second entity — DefinitionRecord, the
-# operational definition of a concept (channel + reduction rule + unit).
-# v4-era files load unchanged (empty definition registry); predictions are
-# untouched and their stored model_ref strings are NEVER migrated or
-# rewritten — derivations keep matching them exactly as stored. Loading a
-# file written by a NEWER schema is refused (an older program re-saving it
-# would silently drop newer fields).
-SCHEMA_VERSION = 5
+# Schema 6: the Knowledge Layer's third entity — RelationRecord, a declared
+# candidate generalization whose local/held-out standing is derived from
+# the ledger (KL-3). v5-era files load unchanged (empty relation registry);
+# predictions are untouched and their stored model_ref strings are NEVER
+# migrated or rewritten — derivations keep matching them exactly as stored.
+# Loading a file written by a NEWER schema is refused (an older program
+# re-saving it would silently drop newer fields).
+SCHEMA_VERSION = 6
 
 
 def _next_ordinal(ids, prefix: str) -> int:
@@ -94,6 +100,7 @@ class KnowledgeBase:
         self.verifications: dict[str, VerificationRecord] = {}
         self.model_records: dict[str, ModelRecord] = {}
         self.definitions: dict[str, DefinitionRecord] = {}
+        self.relations: dict[str, RelationRecord] = {}
         self.load()
 
     @classmethod
@@ -108,6 +115,7 @@ class KnowledgeBase:
             self.laws = {}
             self.model_records = {}
             self.definitions = {}
+            self.relations = {}
             return
         with self.path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -195,6 +203,21 @@ class KnowledgeBase:
             )
             for rec in data.get("definitions", [])
         }
+        self.relations = {
+            rec["relation_id"]: RelationRecord(
+                relation_id=rec["relation_id"],
+                subject=rec.get("subject", ""),
+                formula=rec.get("formula", ""),
+                parameters_ref=rec.get("parameters_ref", ""),
+                scope=tuple(rec.get("scope", [])),
+                declared_by=rec.get("declared_by", ""),
+                created_at=rec.get("created_at", ""),
+                status=rec.get("status", "candidate"),
+                supersedes=rec.get("supersedes", ""),
+                content_hash=rec.get("content_hash", ""),
+            )
+            for rec in data.get("relations", [])
+        }
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,6 +233,7 @@ class KnowledgeBase:
                               for rec in self.model_records.values()],
             "definitions": [asdict(rec)
                             for rec in self.definitions.values()],
+            "relations": [asdict(rec) for rec in self.relations.values()],
         }
         with self.path.open("w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2, ensure_ascii=False)
@@ -611,6 +635,104 @@ class KnowledgeBase:
             if record.status == "active"
             and record.channel == channel
             and record.reduction_rule == reduction_rule)
+    # -- Knowledge Layer KL-3: candidate relations ----------------------------
+    #
+    # RelationRecords are DECLARATIONS, not evaluations: subject, formula,
+    # instantiating model and the training scope are frozen and hash-
+    # anchored; the scope is the single source of the training / held-out
+    # boundary. Rival candidates coexist by design (no unique-active
+    # invariant); supersedes chains revisions of the SAME relation. The
+    # relation's standing is DERIVED (relation_evidence) from the ledger —
+    # counts and condition sets only, never a stored judgment, and there
+    # is no "established" status.
+
+    def declare_relation(self, subject: str, formula: str,
+                         parameters_ref: str, scope: tuple[str, ...],
+                         declared_by: str = "",
+                         supersedes: str = "") -> RelationRecord:
+        """Declare a candidate relation, or revise one atomically.
+
+        First declaration: ``supersedes`` empty. Revision: ``supersedes``
+        names a CANDIDATE relation of the SAME subject AND the SAME
+        instantiating model (formula and scope may change) — the old
+        declaration is closed (status ``superseded``) and the new one is
+        created in a single step; both records still hash-verify.
+
+        Validated loudly: subject is a well-formed concept id, formula is
+        non-empty, the parameters_ref is a REGISTERED model identity, and
+        the scope is a non-empty duplicate-free tuple of non-empty
+        experiment ids.
+        """
+        validate_concept_id(subject)
+        if not formula:
+            raise ValueError("a relation declaration needs a formula")
+        model = self.model_records.get(parameters_ref)
+        if model is None:
+            raise ValueError(
+                f"parameters_ref {parameters_ref!r} is not a registered "
+                "model identity — declare relations only against "
+                "registered models")
+        if model.status != "registered":
+            raise ValueError(
+                f"model {parameters_ref!r} is superseded — a withdrawn "
+                "identity cannot ground new relations")
+        if not scope:
+            raise ValueError(
+                "a relation declaration needs a non-empty training scope")
+        scope = tuple(scope)
+        if len(set(scope)) != len(scope):
+            raise ValueError("scope entries must be unique (no duplicates)")
+        if any(not entry for entry in scope):
+            raise ValueError("scope entries must be non-empty experiment ids")
+        old = self.relations.get(supersedes) if supersedes else None
+        if supersedes:
+            if old is None:
+                raise ValueError(f"unknown relation {supersedes!r}")
+            if old.status != "candidate":
+                raise ValueError(
+                    f"only a candidate relation can be superseded; "
+                    f"{supersedes} is {old.status!r}")
+            if old.subject != subject or old.parameters_ref != parameters_ref:
+                raise ValueError(
+                    f"cannot supersede {supersedes} (subject "
+                    f"{old.subject!r}, model {old.parameters_ref!r}) with a "
+                    f"relation of subject {subject!r}, model "
+                    f"{parameters_ref!r} — declare a rival candidate instead")
+        record = RelationRecord(
+            relation_id=f"rel-{_next_ordinal(self.relations, 'rel-'):04d}",
+            subject=subject,
+            formula=formula,
+            parameters_ref=parameters_ref,
+            scope=scope,
+            declared_by=declared_by,
+            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            supersedes=supersedes,
+        )
+        record = replace(record, content_hash=relation_content_hash(record))
+        if supersedes:
+            self.relations[supersedes] = replace(
+                self.relations[supersedes], status="superseded")
+        self.relations[record.relation_id] = record
+        self.save()
+        return record
+
+    def relation(self, relation_id: str) -> RelationRecord | None:
+        """The relation record for relation_id, or None when unknown."""
+        return self.relations.get(relation_id)
+
+    def relation_evidence(self, relation: RelationRecord) -> RelationEvidence:
+        """The DERIVED evidence view of a relation: local (in-scope) vs
+        generalization (held-out) facts from the ledger.
+
+        Thin convenience wrapper: the derivation itself lives in
+        ``knowledge_records.relation_evidence`` (imported aliased as
+        ``derive_relation_evidence``) — this method only feeds it the
+        model's ledger summary. Nothing is written, nothing is persisted;
+        repeated calls on an unchanged store return equal values.
+        """
+        return derive_relation_evidence(
+            relation, self.evidence_for_model(relation.parameters_ref))
+
 
     def prediction(self, prediction_id: str) -> PredictionRecord | None:
         return self.predictions.get(prediction_id)
