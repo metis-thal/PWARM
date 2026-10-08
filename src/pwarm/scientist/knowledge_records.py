@@ -26,7 +26,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .records import EvidenceSummary, commitment_hash
+from .records import (
+    EvidenceSummary,
+    PredictionRecord,
+    VerificationRecord,
+    commitment_hash,
+)
 
 
 @dataclass(frozen=True)
@@ -302,5 +307,29 @@ def _count_status(pairs: list[RelationPair], status: str) -> int:
 
 def _distinct_conditions(pairs: list[RelationPair]) -> tuple[str, ...]:
     return tuple(sorted({pair.experiment_id for pair in pairs}))
+# -- KL-4: lineage views -------------------------------------------------------
+#
+# A ModelLineage is a pure reference-resolution over the store: the model's
+# identity record (when registered) plus the predictions that reference the
+# id, each with its verifications grouped in ledger order. Nothing is
+# copied, cached or persisted; standing continues to come from
+# competition_state — the lineage is the structural chain, the competition
+# state is the verdict aggregate.
+
+@dataclass(frozen=True)
+class ModelLineage:
+    """The structural chain of one model identity — pure reference resolution.
+
+    ``model_record`` is None when the id was never registered (a legacy
+    free-form string): the predictions are still listed under their stored
+    key, exactly as stored — never migrated, never merged (KL-1 policy).
+    Standing (what the experiments say) is NOT part of the lineage; derive
+    it with ``competition_state(model_id)``.
+    """
+
+    model_record: ModelRecord | None   # reference (None = unregistered id)
+    predictions: tuple[PredictionRecord, ...]   # commitment (seq) order
+    verifications: dict[str, tuple[VerificationRecord, ...]]
+    # keyed by prediction_id, verification-id order within each group
 
 

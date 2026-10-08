@@ -220,3 +220,16 @@ Engine）、概念发现（Concept Discovery）、LawRecord 退役。
    全 confirmed 而在 scope 外 refuted 时，RelationEvidence 如实呈现"局部成立、
    泛化被否"，而这一区分在现有结构中无法表达。若该测试不能证明此能力，切片不
    通过（不堆功能）。
+
+
+## Realization status (as of KL-4, 2026-09-29)
+
+| Slice | Delivered | Schema |
+|---|---|---|
+| KL-1 | `ModelRecord` + `register_model` / `supersede_model`; model_ref normalized to registered ids; exact-match compat | v4 |
+| KL-2 | `DefinitionRecord` + `define_concept` (atomic revision, single active per concept) + `active_definition` / `definitions_for_procedure`; concept_id snake_case discipline; loader refuses newer files | v5 |
+| KL-3 | `RelationRecord` (subject/formula/parameters_ref/scope) + `RelationEvidence` pure derivation (local vs held-out split, fact counts); rivals coexist; no established | v6 |
+| KL-4 | `ModelLineage` + `model_lineage` / `predictions_for_model` / `predictions_for_concept` — pure reference resolution (model→predictions→verifications, concept→predictions); schema unchanged | v6 |
+Lineage chains are id references end to end; every derivation is pure
+(no writes, deterministic); no score/ranking/winner/confidence exists in
+the layer. Next (separately authorized): held-out prediction, autonomy.

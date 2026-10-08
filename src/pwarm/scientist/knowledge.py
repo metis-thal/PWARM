@@ -22,6 +22,7 @@ from pathlib import Path
 from .contracts import observation_fields, reduction_rules
 from .knowledge_records import (
     DefinitionRecord,
+    ModelLineage,
     ModelRecord,
     RelationEvidence,
     RelationRecord,
@@ -635,6 +636,50 @@ class KnowledgeBase:
             if record.status == "active"
             and record.channel == channel
             and record.reduction_rule == reduction_rule)
+    # -- Knowledge Layer KL-4: lineage queries --------------------------------
+    #
+    # Pure reference resolution over the store — no copies, no cache, no
+    # writes. Exact-match discipline (KL-1): a legacy model_ref string is
+    # never merged into a registered id's lineage.
+
+    def predictions_for_model(self, model_ref: str) -> tuple[PredictionRecord, ...]:
+        """Predictions whose stored model_ref equals model_id, in commitment
+        (seq) order — the identity side of the lineage chain."""
+        return tuple(sorted(
+            (record for record in self.predictions.values()
+             if record.model_ref == model_ref),
+            key=lambda record: record.seq))
+
+    def predictions_for_concept(self, concept_id: str) -> tuple[PredictionRecord, ...]:
+        """Predictions whose claim names the concept, in commitment (seq)
+        order — the claim side of the lineage chain (a DefinitionRecord's
+        concept_id resolves here)."""
+        return tuple(sorted(
+            (record for record in self.predictions.values()
+             if record.claim == concept_id),
+            key=lambda record: record.seq))
+
+    def model_lineage(self, model_id: str) -> ModelLineage:
+        """The structural chain of one model identity: its registered
+        record (None when unregistered) plus the predictions referencing
+        the id, each with its verifications grouped in ledger order.
+
+        Pure derivation — nothing is written, nothing is cached; repeated
+        calls on an unchanged store return equal values. Standing is not
+        part of the lineage: derive it with ``competition_state``.
+        """
+        predictions = self.predictions_for_model(model_id)
+        verifications: dict[str, tuple[VerificationRecord, ...]] = {
+            record.prediction_id: () for record in predictions}
+        for record in self.verifications.values():   # ledger insertion order
+            if record.prediction_id in verifications:
+                verifications[record.prediction_id] += (record,)
+        return ModelLineage(
+            model_record=self.model_records.get(model_id),
+            predictions=predictions,
+            verifications=verifications,
+        )
+
     # -- Knowledge Layer KL-3: candidate relations ----------------------------
     #
     # RelationRecords are DECLARATIONS, not evaluations: subject, formula,

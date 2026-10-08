@@ -60,6 +60,7 @@ from pwarm.scientist.agent import proposal_to_spec
 from pwarm.scientist.knowledge import SCHEMA_VERSION
 from pwarm.scientist.knowledge_records import (
     DefinitionRecord,
+    ModelLineage,
     ModelRecord,
     RelationEvidence,
     RelationRecord,
@@ -4292,5 +4293,142 @@ def test_v5_store_loads_and_upgrades_to_v6(tmp_path):
     assert data["schema_version"] == 6
     assert data["definitions"][0]["concept_id"] == "gravity"
     assert data["relations"][0]["subject"] == "z_first"
+# -- Knowledge Layer KL-4: lineage queries --------------------------------------
+#
+# Pure reference resolution: model -> predictions -> verifications, and
+# concept -> predictions. Nothing copied, cached or written; exact-match
+# discipline (KL-1) carries over — legacy strings are never merged into a
+# registered id's lineage.
+
+def test_model_lineage_resolves_the_full_chain(lab, tmp_path):
+    """register -> commit -> verify: the lineage resolves the identity
+    record, the predictions in commitment order, and the verifications
+    grouped per prediction in ledger order — all by reference."""
+    knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    _verify_rivals(agent, records, observation)
+
+    lineage = knowledge.model_lineage("linear")
+
+    assert lineage.model_record is not None
+    assert lineage.model_record.model_id == "linear"
+    assert [p.model_ref for p in lineage.predictions] == ["linear"]
+    grouped = lineage.verifications[records[0].prediction_id]
+    assert [v.experiment_id for v in grouped] == ["drop_h5_m1"]
+    # references, not copies: the very same ledger objects
+    assert lineage.predictions[0] is knowledge.predictions[records[0].prediction_id]
+    assert grouped[0] is knowledge.verifications[grouped[0].verification_id]
+
+
+def test_model_lineage_is_pure_derivation(lab, tmp_path):
+    """Deriving a lineage writes nothing and is deterministic: the store's
+    JSON is byte-identical after the query, and repeated calls are equal."""
+    knowledge, agent, records, observation = _competed_and_executed(lab, tmp_path)
+    _verify_rivals(agent, records, observation)
+    snapshot = knowledge.path.read_text(encoding="utf-8")
+
+    first = knowledge.model_lineage("linear")
+    second = knowledge.model_lineage("linear")
+
+    assert first == second
+    assert knowledge.path.read_text(encoding="utf-8") == snapshot
+
+
+def test_model_lineage_predictions_follow_commitment_order(lab, tmp_path):
+    """Multiple predictions for one model appear in seq (commitment) order,
+    regardless of insertion-time iteration order."""
+    knowledge = _identity_knowledge(tmp_path)
+    pred1 = knowledge.commit_prediction(
+        model_ref="linear", claim="linear", spec_ref="E1", value=5.0,
+        tolerance=0.5, reduction_channel="z", reduction_rule="first")
+    pred2 = knowledge.commit_prediction(
+        model_ref="linear", claim="linear", spec_ref="E2", value=6.0,
+        tolerance=0.5, reduction_channel="z", reduction_rule="first")
+
+    lineage = knowledge.model_lineage("linear")
+
+    assert [p.prediction_id for p in lineage.predictions] \
+        == [pred1.prediction_id, pred2.prediction_id]
+    assert lineage.model_record is None    # id never registered: tolerated
+    assert lineage.verifications == {pred1.prediction_id: (), pred2.prediction_id: ()}
+
+
+def test_model_lineage_exact_match_never_merges_legacy_strings(tmp_path):
+    """KL-1 policy carries over: predictions stored under a legacy
+    free-form model_ref are listed under that key, and a registered id's
+    lineage NEVER absorbs them."""
+    knowledge = _identity_knowledge(tmp_path)
+    knowledge.commit_prediction(
+        model_ref="model linear", claim="linear", spec_ref="E1",
+        value=5.0, tolerance=0.5,
+        reduction_channel="z", reduction_rule="free_fall_g")
+    knowledge.register_model("linear", "y = k*x", {"k": 1.0})
+    knowledge.commit_prediction(
+        model_ref="linear", claim="linear", spec_ref="E2",
+        value=5.0, tolerance=0.5,
+        reduction_channel="z", reduction_rule="first")
+
+    registered = knowledge.model_lineage("linear")
+    legacy = knowledge.model_lineage("model linear")
+
+    assert [p.spec_ref for p in registered.predictions] == ["E2"]
+    assert registered.model_record is not None
+    assert [p.spec_ref for p in legacy.predictions] == ["E1"]
+    assert legacy.model_record is None
+
+
+def test_predictions_for_concept_resolves_claim_side(tmp_path):
+    """The claim side of the lineage: a concept's predictions resolve by
+    claim equality, in commitment order; unrelated claims are excluded."""
+    knowledge = _identity_knowledge(tmp_path)
+    g1 = knowledge.commit_prediction(
+        model_ref="innate prior", claim="gravity", spec_ref="E1",
+        value=9.81, tolerance=0.1,
+        reduction_channel="z", reduction_rule="free_fall_g")
+    other = knowledge.commit_prediction(
+        model_ref="innate prior", claim="air_density", spec_ref="E2",
+        value=1.0, tolerance=0.1,
+        reduction_channel="z", reduction_rule="first")
+    g2 = knowledge.commit_prediction(
+        model_ref="innate prior", claim="gravity", spec_ref="E3",
+        value=9.79, tolerance=0.1,
+        reduction_channel="z", reduction_rule="free_fall_g")
+
+    assert [p.prediction_id for p in knowledge.predictions_for_concept("gravity")] \
+        == [g1.prediction_id, g2.prediction_id]
+    assert knowledge.predictions_for_concept("nobody") == ()
+    assert other.claim not in {p.claim for p in
+                               knowledge.predictions_for_concept("gravity")}
+    # the definition-side companion query stays empty until a concept is defined
+    assert knowledge.active_definition("gravity") is None
+
+
+def test_model_lineage_structure_pin():
+    """The lineage view is structural facts only: identity reference,
+    predictions, grouped verifications — no evaluation field can appear."""
+    assert [f.name for f in dataclasses.fields(ModelLineage)] == [
+        "model_record", "predictions", "verifications"]
+    forbidden = {"score", "confidence", "accuracy", "winner", "rank",
+                 "weight", "probability", "quality", "established"}
+    assert not any(f.name in forbidden
+                   for f in dataclasses.fields(ModelLineage))
+
+
+def _trial_setup(lab, tmp_path):
+    """HP: a store with the rival identities registered and an agent."""
+    knowledge = KnowledgeBase(tmp_path / "k.json", universe="universe_001")
+    agent = ScientistAgent(lab, knowledge)
+    _register_rival_models(knowledge)
+    return knowledge, agent
+
+
+def _quadratic_contract():
+    """The explicit per-model contract kwargs for quadratic trials."""
+    return {
+        "tolerances": {"quadratic": 0.01},
+        "binding": ConditionBinding({"x": "drop_height"}),
+        "output_binding": OutputBinding({"y": "z"}),
+        "output": "y",
+        "reduction": ObservationReduction(channel="z", rule="first"),
+    }
 
 
