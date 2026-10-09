@@ -36,6 +36,69 @@ verification → competition state), in priority order:
    split before Phase 3.
 8. **Temporal dimension** — CompetitionState has no timestamp ordering;
    whether stale evidence applies to a revised model is unmodelled.
+9. **Production import integrity — dangling `pwarm.kernel` imports** —
+   registered 2026-10-09 by the pre-merge test-coverage audit; fixing it is
+   a product/architecture decision, NOT done as part of the test change.
+   See the dedicated section below.
+
+## Production Import Integrity — Dangling `pwarm.kernel` Imports
+
+**Status: REGISTERED ONLY (2026-10-09). Deliberately not fixed in the
+test-coverage change; restoring the kernel or re-pointing imports is gated
+on an explicit decision.**
+
+`pwarm.kernel` was deleted in commit `75a9e04`, but the following modules
+still import it at module level and therefore **fail to import in any
+production (non-test) environment**:
+
+| Module | Missing import(s) |
+|---|---|
+| `pwarm/rules/chemistry.py` | `pwarm.kernel.bodies.Body` |
+| `pwarm/rules/thermal.py` | `pwarm.kernel.bodies.Body` |
+| `pwarm/rules/ecology.py` | `pwarm.kernel.bodies.Body` (+ `Material`/`circle_body` in its `__main__` block) |
+| `pwarm/rules/fracture.py` | `pwarm.kernel.bodies.Body`, `pwarm.kernel.collision.Contact` |
+| `pwarm/rules/materials.py` | `pwarm.kernel.bodies3d.Body` |
+| `pwarm/viz/viewer.py` | `pwarm.kernel.bodies.{Body,Material}`, `pwarm.kernel.world.World` |
+| `pwarm/viz/viewer3d.py` | `pwarm.kernel.math3d.quat_to_axis_angle`, `pwarm.kernel.world3d.World3D` |
+| `pwarm/ai/experiment.py` | `pwarm.kernel.bodies.{Material,circle_body}`, `pwarm.kernel.world.World` |
+| `pwarm/parallel/ray_parallel.py` | `pwarm.kernel.bodies3d.{Body,Material}`, `pwarm.kernel.world3d.World3D` (plus `ray`, an optional extra) |
+
+`pwarm/ai/observer.py` and `pwarm/ai/closed_loop.py` touch the kernel only
+under `TYPE_CHECKING` and import fine.
+
+**Minimal reproduction** (fresh interpreter, no pytest, no conftest):
+
+```
+python -c "import sys; sys.path.insert(0, 'src'); import pwarm.rules.chemistry"
+# ModuleNotFoundError: No module named 'pwarm.kernel'
+```
+
+**Why the test suite is green anyway:** `tests/conftest.py` installs an
+in-memory `sys.modules` stand-in for `pwarm.kernel` (mirroring the
+pre-deletion dataclass interface, commit `e1a8551`) whenever the real
+package is absent. Imports therefore succeed inside pytest, the modules
+execute under tests, and coverage counts them. This is deliberate — it
+keeps the surviving logic testable instead of excluding 800+ statements —
+but it must be read correctly:
+
+> The coverage numbers (87.9% with torch, ≈82.4% in the current CI
+> configuration — see `docs/testing/TEST_POLICY.md`, "Coverage baselines")
+> measure logic executed under test stubs. They do NOT measure production
+> importability. Import integrity and the coverage metric are separate
+> concerns; neither implies the other.
+
+**Disposition options (decision pending; nothing implemented):**
+
+1. **Restore** the kernel package from history (`75a9e04^`; full copy at
+   `e1a8551`) and re-home it under `src/pwarm/kernel/`.
+2. **Re-point** each module's imports onto the current architecture
+   (`physics.core`, `physics.WorldEngine`) — per-module decision; the rules
+   modules need 2-D body/contact value types that no longer exist, so this
+   includes small design work, not a mechanical rename.
+3. **Retire** the affected modules formally (remove them or move them to an
+   explicit legacy namespace) — product decision.
+4. **Interim documentation**: mark the affected modules as not importable in
+   production builds in ARCHITECTURE.md/README until 1–3 is decided.
 
 ## Phase 3: Multi-Discipline Coupling + Complex Emergent Scenarios (3-4 weeks)
 

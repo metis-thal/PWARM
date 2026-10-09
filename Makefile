@@ -4,7 +4,7 @@
 PYTHON ?= python
 export PYTHONPATH := src
 
-.PHONY: demo demo-001 demo-002 demo-003 test repro clean
+.PHONY: demo demo-001 demo-002 demo-003 test coverage repro clean
 
 demo: demo-001            ## the stranger test: watch the AI discover gravity
 
@@ -19,6 +19,10 @@ demo-003:                 ## Mission 003 — budget + instrument arc (headless)
 
 test:                     ## full test suite
 	$(PYTHON) -m pytest tests/ -q
+
+coverage:                 ## test suite with branch-coverage gate (>= 80%)
+	$(PYTHON) -m pytest tests/ -q --cov=pwarm --cov-branch \
+	    --cov-report=term --cov-fail-under=80
 
 repro:                    ## regenerate all reproducibility results
 	bash reproducibility/mission_001/run.sh

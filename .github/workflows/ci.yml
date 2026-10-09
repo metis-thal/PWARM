@@ -27,8 +27,14 @@ jobs:
       - name: Lint
         run: ruff check src tests
 
-      - name: Unit + scientist tests
-        run: pytest tests/ -q
+      # Tests + branch-coverage gate (>= 80% threshold from pyproject).
+      # CI installs only [viz,dev]: torch (which ships with the `ai` extra)
+      # is NOT installed, so tests/ai/test_legacy_ai.py skips at import.
+      # Measured CI-configuration branch coverage is ~82%, vs ~88% with
+      # torch present. 80% is the gate — it is not a fixed coverage number.
+      # See docs/testing/TEST_POLICY.md, "Coverage baselines".
+      - name: Tests with coverage gate (branch coverage >= 80%)
+        run: pytest tests/ -q --cov=pwarm --cov-branch --cov-report=term --cov-fail-under=80
 
       # Green here means more than "tests pass": the stranger test itself
       # still runs — the AI discovers gravity in a plain terminal.

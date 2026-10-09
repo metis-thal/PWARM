@@ -36,6 +36,7 @@ parallel = [
 ]
 dev = [
     "pytest>=7.4",
+    "pytest-cov>=4.0",
     "pytest-benchmark>=4.0",
     "ruff>=0.1",
 ]
@@ -50,6 +51,24 @@ pwarm = ["universes/*/config.yaml", "universes/*/rules.yaml"]
 testpaths = ["tests"]
 addopts = "-q"
 pythonpath = ["src"]
+
+[tool.coverage.run]
+branch = true
+source = ["pwarm"]
+
+[tool.coverage.report]
+# Release gate: branch coverage over the whole pwarm package (ISO/IEC/IEEE
+# 29119-aligned policy — see docs/testing/TEST_POLICY.md).
+fail_under = 80
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "@abstractmethod",
+    "@abc.abstractmethod",
+]
 
 [tool.ruff]
 line-length = 100
