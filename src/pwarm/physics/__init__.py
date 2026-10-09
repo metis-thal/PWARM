@@ -16,23 +16,36 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..interface import (
-    GUI,
-    CameraConfig,
-    CameraSensor,
-    EnvConfig,
-    ForceSensor,
-    ParallelEnv,
-    SensorData,
-    SensorType,
-    VectorizedEnv,
-    load_gltf,
-    load_mjcf,
-    load_urdf,
-    parse_gltf,
-    parse_mjcf,
-    parse_urdf,
-)
+# Interface names are re-exported lazily via module __getattr__ below.
+# A module-level ``from ..interface import ...`` here creates an import
+# cycle (interface.asset_parser imports physics.core.component, which runs
+# this __init__), which breaks any process whose first pwarm import is
+# ``pwarm.interface.*``.
+_INTERFACE_REEXPORTS = frozenset({
+    "GUI",
+    "CameraConfig",
+    "CameraSensor",
+    "EnvConfig",
+    "ForceSensor",
+    "ParallelEnv",
+    "SensorData",
+    "SensorType",
+    "VectorizedEnv",
+    "load_gltf",
+    "load_mjcf",
+    "load_urdf",
+    "parse_gltf",
+    "parse_mjcf",
+    "parse_urdf",
+})
+
+
+def __getattr__(name: str):
+    if name in _INTERFACE_REEXPORTS:
+        from .. import interface
+
+        return getattr(interface, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # AI Layer imports
 from .ai import (

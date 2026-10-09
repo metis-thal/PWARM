@@ -429,7 +429,10 @@ class PINNWrapper:
     
     def load(self, path: str):
         """Load trained model."""
-        checkpoint = torch.load(path, map_location=self.config.device)
+        # Checkpoints embed the PINNConfig dataclass, which the torch>=2.6
+        # weights_only default rejects; these files are self-produced.
+        checkpoint = torch.load(path, map_location=self.config.device,
+                                weights_only=False)
         self.pde_type = checkpoint["pde_type"]
         self.config = checkpoint["config"]
         

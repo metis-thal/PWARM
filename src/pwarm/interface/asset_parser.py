@@ -216,9 +216,9 @@ def _create_entity_from_link(link: URDFLink) -> Entity:
         RigidBodyComponent,
         TransformComponent,
     )
-    from ..physics.core.entity import ComponentMask, Entity
-    
-    entity = Entity(name=link.name)
+    from ..physics.core.entity import ComponentMask, Entity, EntityID
+
+    entity = Entity(id=EntityID(), name=link.name)
     entity.mask = ComponentMask.RIGID_DYNAMIC if link.mass > 0 else ComponentMask.RIGID_STATIC
     
     # Transform
@@ -237,8 +237,9 @@ def _create_entity_from_link(link: URDFLink) -> Entity:
     except np.linalg.LinAlgError:
         rb.inv_inertia_local = np.eye(3, dtype=np.float32)
     rb.is_static = link.mass <= 0
-    entity.add(ComponentMask.RIGID_BODY)
-    
+    if link.mass > 0:
+        entity.add(ComponentMask.RIGID_BODY)
+
     # Collision shape
     if link.collision_geometry:
         shape = CollisionShapeComponent()
