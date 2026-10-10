@@ -1,18 +1,20 @@
 """Tests for the fracture rule module (rules.fracture).
 
-``pwarm.kernel`` is stubbed by tests/conftest.py. Scope: principal stress
-algebra, contact stress estimation, the crack check, body splitting (circle
-and polygon), and the fracture event pipeline (fragment mass filtering,
-static handling, missing-body robustness).
+Runs against the REAL 2-D value types (``pwarm.rules.bodies2d``) — no
+``pwarm.kernel`` stub involved. Scope: principal stress algebra, contact
+stress estimation, the crack check, body splitting (circle and polygon), and
+the fracture event pipeline (fragment mass filtering, static handling,
+missing-body robustness).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pytest
-from pwarm.kernel.bodies import Body, Material
-from pwarm.kernel.collision import Contact
 
+from pwarm.rules.bodies2d import Body, Material
 from pwarm.rules.fracture import (
     FractureParams,
     check_fracture,
@@ -22,6 +24,19 @@ from pwarm.rules.fracture import (
     process_fracture,
     split_body,
 )
+
+
+@dataclass
+class Contact:
+    """Minimal engine-style contact record (fracture consumes it duck-typed)."""
+
+    a: Body
+    b: Body
+    point: np.ndarray
+    normal: np.ndarray
+    penetration: float
+    restitution: float
+    friction: float
 
 
 def make_body(pos, mass=1.0, radius=0.0, vertices=None, static=False,
@@ -138,6 +153,16 @@ def test_split_circle_produces_two_halves() -> None:
     assert all(abs(f.mass - 1.0) < 1e-12 for f in fragments)
     offsets = sorted(f.pos[0] for f in fragments)
     assert offsets == pytest.approx([-0.25, 0.25])  # +-0.5*radius along x
+
+
+def test_split_fragments_carry_the_body_material() -> None:
+    """Fragments share the original body's material instance and parameters."""
+    mat = Material(young_modulus=5e8, fracture_toughness=1e3, brittleness=0.9)
+    body = make_body([0, 0], mass=2.0, radius=0.5, material=mat)
+    fragments = split_body(body, angle=0.0, params=FractureParams())
+    assert len(fragments) == 2
+    assert all(f.material is mat for f in fragments)
+    assert all(f.material.fracture_toughness == 1e3 for f in fragments)
 
 
 def test_split_polygon_produces_two_fragments() -> None:

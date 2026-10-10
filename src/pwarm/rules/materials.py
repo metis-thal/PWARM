@@ -12,10 +12,15 @@ All equations are standard continuum mechanics formulations; no hardcoded phenom
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from pwarm.kernel.bodies3d import Body as Body3D
+if TYPE_CHECKING:
+    # Legacy kernel 3-D body value (deleted in 75a9e04; never restored).
+    # Only a DeformableBody field annotation references it — see
+    # DEFERRED_WORK.md, "Production Import Integrity".
+    from pwarm.kernel.bodies3d import Body as Body3D
 
 
 @dataclass

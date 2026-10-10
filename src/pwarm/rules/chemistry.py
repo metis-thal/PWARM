@@ -13,10 +13,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from pwarm.kernel.bodies import Body
+if TYPE_CHECKING:
+    # Legacy kernel 2-D body value (deleted in 75a9e04; never restored).
+    # Runtime code duck-types .mass, .temperature, .heat and
+    # .material.specific_heat — see DEFERRED_WORK.md,
+    # "Production Import Integrity".
+    from pwarm.kernel.bodies import Body
 
 
 class Phase(Enum):

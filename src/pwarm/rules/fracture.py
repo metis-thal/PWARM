@@ -15,11 +15,28 @@ This is a rules-layer extension; the physics kernel remains the ground truth.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 import numpy as np
 
-from pwarm.kernel.bodies import Body
-from pwarm.kernel.collision import Contact
+from pwarm.rules.bodies2d import Body
+
+
+class ContactLike(Protocol):
+    """Structural contract of the contact records the fracture rules consume.
+
+    Any engine contact object exposing these attributes qualifies — the
+    legacy kernel's ``collision.Contact`` did, and so does any contact
+    record carrying the same fields.  ``point``/``normal`` are world-frame
+    2-vectors; ``penetration`` is the overlap depth in metres.
+    """
+
+    a: Body
+    b: Body
+    point: np.ndarray
+    normal: np.ndarray
+    penetration: float
+    friction: float
 
 
 @dataclass
@@ -47,7 +64,7 @@ def principal_stress_angle(stress_xx: float, stress_yy: float, stress_xy: float)
     return 0.5 * np.arctan2(2.0 * stress_xy, stress_xx - stress_yy)
 
 
-def estimate_contact_stress(contact: Contact) -> tuple[float, float, float]:
+def estimate_contact_stress(contact: ContactLike) -> tuple[float, float, float]:
     """Estimate stress tensor at a contact point from contact impulse.
 
     Returns (stress_xx, stress_yy, stress_xy) in Pa.
@@ -102,7 +119,7 @@ def estimate_contact_stress(contact: Contact) -> tuple[float, float, float]:
     return stress_xx, stress_yy, stress_xy
 
 
-def check_fracture(contact: Contact) -> bool:
+def check_fracture(contact: ContactLike) -> bool:
     """Check if a contact should cause fracture based on stress intensity.
 
     Returns True if fracture should occur.
@@ -251,7 +268,7 @@ def _split_polygon(body: Body, angle: float) -> list[Body]:
     return [b1, b2]
 
 
-def process_fracture(contacts: list[Contact], bodies: list[Body], params: FractureParams | None = None) -> list[Body]:
+def process_fracture(contacts: list[ContactLike], bodies: list[Body], params: FractureParams | None = None) -> list[Body]:
     """Process all contacts for fracture, return updated body list with fractures applied.
 
     Modifies the bodies list in place (removes fractured bodies, adds fragments).

@@ -13,10 +13,18 @@ with thermal behavior, all derived from equations (no hardcoded phenomena).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from pwarm.kernel.bodies import Body
+if TYPE_CHECKING:
+    # Legacy kernel 2-D body value (deleted in 75a9e04; never restored).
+    # Runtime code duck-types .mass, .temperature, .heat,
+    # .material.specific_heat and .material.thermal_conductivity; contacts
+    # may be any objects exposing .a/.b (legacy kernel Contact) or plain
+    # (Body, Body) tuples — see DEFERRED_WORK.md,
+    # "Production Import Integrity".
+    from pwarm.kernel.bodies import Body
 
 
 def heat_capacity(body: Body) -> float:

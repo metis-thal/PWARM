@@ -116,6 +116,26 @@ World.step(n)
 
 ---
 
+> ⚠️ **Legacy API notice / 旧 API 通知** — Chapters 3–9 document APIs that are
+> partially or wholly **not importable in a production environment** since the
+> legacy `pwarm.kernel` package was removed (see
+> [docs/architecture/deprecated-kernel.md](docs/architecture/deprecated-kernel.md)):
+> the 2D/3D physics, collision and observer examples call the removed kernel
+> directly, and `pwarm.viz.viewer` / `pwarm.viz.viewer3d` /
+> `pwarm.parallel.ray_parallel` still import it — they are pending retirement
+> or migration (tracked in `DEFERRED_WORK.md`, "Production Import Integrity",
+> and gated by `tests/test_production_imports.py`).  The live physics entry
+> point is `pwarm.physics.WorldEngine`; the live AI layer is `pwarm.scientist`
+> (see chapter 11).
+>
+> ⚠️ **旧 API 通知** — 自旧 `pwarm.kernel` 包删除后，第 3–9 章记载的 API 已
+> 部分或全部**无法在生产环境导入**：2D/3D 物理、碰撞与观察器示例直接调用已
+> 删除的内核；`pwarm.viz.viewer` / `pwarm.viz.viewer3d` /
+> `pwarm.parallel.ray_parallel` 仍在导入它，待退役或迁移（见
+> `DEFERRED_WORK.md` 的 "Production Import Integrity"，由
+> `tests/test_production_imports.py` 守护）。现行物理入口是
+> `pwarm.physics.WorldEngine`，现行 AI 层是 `pwarm.scientist`（见第 11 章）。
+
 ## 3. 2D Physics / 2D物理
 
 ### Creating Bodies / 创建刚体
