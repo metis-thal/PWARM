@@ -108,7 +108,7 @@ it is unverified against a real CI run until the workflow executes. The
 | `tests/viz/test_gl_renderer_windowless.py` | `viz/gl_renderer` (input handling, windowless) |
 | `tests/viz/test_snapshot.py` | `viz/snapshot` |
 | `tests/viz/test_text_overlay.py` | `viz/text_overlay` (needs a standalone GL context) |
-| `tests/viz/test_viewers.py` | `viz/viewer`, `viz/viewer3d` (off-screen pyvista; skips on Linux without a display — real Linux-CI behaviour unverified) |
+| `tests/viz/test_viewers.py` | `viz/viewer`, `viz/viewer3d` (off-screen pyvista; skips on Linux without a display — verified green on Linux CI 2026-10-10; skips on CI Windows runners, where GPU-less software OpenGL makes VTK's native render access-violate — uncatchable in-process, so the guard is static) |
 | `tests/scientist/*` | `scientist/**` |
 | `tests/test_reproducibility.py` | reproducibility artifacts |
 

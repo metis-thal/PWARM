@@ -8,9 +8,14 @@ timer/pause/speed/reset controls, frame rendering, and PNG recording.
 Environment preconditions (skips are narrow, never exception-wide):
 - pyvista must be importable (it ships with the ``viz`` extra);
 - on Linux, VTK off-screen rendering needs X/Wayland (or an OSMesa VTK
-  build) — without a display the module skips. Real Linux-CI behaviour was
-  NOT verified as of 2026-10-09 (no Linux machine available); run under
-  xvfb to exercise these tests there.
+  build) — without a display the module skips. Verified green on real
+  Linux CI 2026-10-10 (the no-display guard skipped the module there);
+  run under xvfb to exercise these tests on a headless Linux machine;
+- on CI Windows runners the module skips unconditionally: they have no
+  GPU and only software OpenGL, and VTK's native render ACCESS-VIOLATES
+  there (first observed 2026-10-10, run 38030465129) — a native crash
+  cannot be caught in-process, so the guard must be static. These tests
+  need a real graphics stack (developer machines).
 
 Every viewer fixture is function-scoped: each test builds its own world and
 plotter, so no test depends on execution order or leftover state.
@@ -38,6 +43,14 @@ if sys.platform.startswith("linux") and not (
         "VTK off-screen rendering on Linux requires X/Wayland (or an OSMesa "
         "VTK build); no display detected — run under xvfb to exercise these "
         "tests",
+        allow_module_level=True,
+    )
+
+if os.environ.get("CI") and sys.platform == "win32":
+    pytest.skip(
+        "CI Windows runners have no GPU and only software OpenGL: VTK's "
+        "native render access-violates there and cannot be caught "
+        "in-process — these tests need a real graphics stack",
         allow_module_level=True,
     )
 

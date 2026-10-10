@@ -130,10 +130,13 @@ the 2026-10-09 pre-fix audit; invisible to the import gate):**
 
 - `pwarm/ai/pinn.py` imports `torch` at module level — covered by the `ai`
   extra; `import pwarm.ai` does not require it.
-- `pwarm/viz/text_overlay.py` imports `PIL` (Pillow) at module level, but
-  **Pillow is not declared in any extra** — a bare or CI `[viz,dev]` install
-  cannot import it (tests skip via `importorskip`).  Disposition pending:
-  declare it (e.g. in `viz`) or drop the dependency.
+- `pwarm/viz/text_overlay.py` imports `PIL` (Pillow) at module level, and
+  **Pillow is not declared in any extra** — a bare `pip install PWARM`
+  cannot import it.  (A `[viz,dev]` install DOES get it transitively via
+  `pyvista → matplotlib → pillow` — verified in the 2026-10-10 CI log, so
+  the earlier claim that CI cannot import it was wrong; the import-contract
+  test's `OPTIONAL_DEPS` entry remains the guard for bare environments.)
+  Disposition pending: declare it (e.g. in `viz`) or drop the dependency.
 - `pwarm/viz/gl_renderer.py` imports `glfw`/`moderngl` — covered by `viz`.
 - `numba` is a declared core dependency but no module in `src/pwarm` imports
   it at module level (observation only; packaging review out of scope here).
